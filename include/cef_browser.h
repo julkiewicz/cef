@@ -744,6 +744,7 @@ class CefBrowserHost : public virtual CefBaseRefCounted {
   /*--cef()--*/
   virtual void SendExternalBeginFrame() = 0;
 
+#if CEF_API_ADDED(CEF_EXPERIMENTAL)
   ///
   /// Release a surface leased by CefRenderHandler::OnAcceleratedPaint.
   /// |surface_id| is the value delivered in CefAcceleratedPaintInfo. This
@@ -755,8 +756,9 @@ class CefBrowserHost : public virtual CefBaseRefCounted {
   /// is no longer in use or capture will stall. Releasing an id that is unknown
   /// or already released does nothing.
   ///
-  /*--cef()--*/
+  /*--cef(added=experimental)--*/
   virtual void ReleaseAcceleratedPaintSurface(uint64_t surface_id) = 0;
+#endif
 
   ///
   /// Send a key event to the browser.

@@ -34,6 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "include/cef_api_hash.h"
 #include "include/internal/cef_types_geometry.h"
 
 #ifdef __cplusplus
@@ -112,6 +113,7 @@ typedef struct _cef_accelerated_paint_info_common_t {
   ///
   uint8_t has_capture_counter;
 
+#if CEF_API_ADDED(CEF_EXPERIMENTAL)
   ///
   /// Opaque identifier for a leased surface, or 0 when no lease was granted.
   ///
@@ -122,6 +124,7 @@ typedef struct _cef_accelerated_paint_info_common_t {
   /// stalls capture.
   ///
   uint64_t surface_id;
+#endif
 
 } cef_accelerated_paint_info_common_t;
 

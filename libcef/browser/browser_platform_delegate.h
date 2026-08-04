@@ -315,6 +315,10 @@ class CefBrowserPlatformDelegate {
   // Send the external begin frame message. Only used with windowless rendering.
   virtual void SendExternalBeginFrame();
 
+  // Release a leased accelerated paint surface. Only used with windowless
+  // rendering.
+  virtual void ReleaseAcceleratedPaintSurface(uint64_t surface_id);
+
   // Set the windowless frame rate. Only used with windowless rendering.
   virtual void SetWindowlessFrameRate(int frame_rate);
 

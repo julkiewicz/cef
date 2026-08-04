@@ -265,6 +265,14 @@ void CefBrowserPlatformDelegateOsr::SendExternalBeginFrame() {
   }
 }
 
+void CefBrowserPlatformDelegateOsr::ReleaseAcceleratedPaintSurface(
+    uint64_t surface_id) {
+  CefRenderWidgetHostViewOSR* view = GetOSRHostView();
+  if (view) {
+    view->ReleaseAcceleratedPaintSurface(surface_id);
+  }
+}
+
 void CefBrowserPlatformDelegateOsr::SetWindowlessFrameRate(int frame_rate) {
   CefRenderWidgetHostViewOSR* view = GetOSRHostView();
   if (view) {

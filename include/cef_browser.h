@@ -745,6 +745,20 @@ class CefBrowserHost : public virtual CefBaseRefCounted {
   virtual void SendExternalBeginFrame() = 0;
 
   ///
+  /// Release a surface leased by CefRenderHandler::OnAcceleratedPaint.
+  /// |surface_id| is the value delivered in CefAcceleratedPaintInfo. This
+  /// method is only used when window rendering is disabled.
+  ///
+  /// While a lease is held the surface is not returned to the capture pool and
+  /// its texture handle stays valid, so it may be sampled after the paint
+  /// callback returns. The pool is small, so release each surface as soon as it
+  /// is no longer in use or capture will stall. Releasing an id that is unknown
+  /// or already released does nothing.
+  ///
+  /*--cef()--*/
+  virtual void ReleaseAcceleratedPaintSurface(uint64_t surface_id) = 0;
+
+  ///
   /// Send a key event to the browser.
   ///
   /*--cef()--*/

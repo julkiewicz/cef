@@ -12,8 +12,6 @@
 #include "media/capture/mojom/video_capture_types.mojom.h"
 #include "ui/gfx/skbitmap_operations.h"
 
-namespace {
-
 // Owns everything that has to stay alive for as long as a captured frame is in
 // use, so that one object governs one lifetime:
 //
@@ -45,8 +43,6 @@ class CefCapturedFrameLease {
   mojo::Remote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks> callbacks_;
 };
 
-}  // namespace
-
 CefVideoConsumerOSR::CefVideoConsumerOSR(CefRenderWidgetHostViewOSR* view,
                                          bool use_shared_texture)
     : use_shared_texture_(use_shared_texture),
@@ -64,7 +60,23 @@ CefVideoConsumerOSR::CefVideoConsumerOSR(CefRenderWidgetHostViewOSR* view,
   SetActive(true);
 }
 
-CefVideoConsumerOSR::~CefVideoConsumerOSR() = default;
+CefVideoConsumerOSR::~CefVideoConsumerOSR() {
+  // Leases outstanding at teardown mean the client never released surfaces it
+  // was handed. Returning them here keeps the capture pool consistent, but the
+  // client is at fault: it may still be sampling textures that are about to be
+  // recycled.
+  if (!leases_.empty()) {
+    LOG(ERROR) << leases_.size()
+               << " accelerated paint surface(s) still leased at teardown; "
+                  "the client did not release them";
+  }
+}
+
+void CefVideoConsumerOSR::ReleaseSurface(uint64_t surface_id) {
+  // Releasing an unknown or already released id is a no-op by contract, so that
+  // a client tearing down does not have to track which ids are still live.
+  leases_.erase(surface_id);
+}
 
 void CefVideoConsumerOSR::SetActive(bool active) {
   if (active) {

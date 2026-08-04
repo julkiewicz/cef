@@ -1,6 +1,8 @@
 #ifndef LIBCEF_BROWSER_OSR_VIDEO_CONSUMER_OSR_H_
 #define LIBCEF_BROWSER_OSR_VIDEO_CONSUMER_OSR_H_
 
+#include <map>
+#include <memory>
 #include <optional>
 
 #include "base/functional/callback.h"
@@ -9,6 +11,10 @@
 #include "media/capture/mojom/video_capture_types.mojom.h"
 
 class CefRenderWidgetHostViewOSR;
+
+// Holds a captured frame's pool slot and buffer handle for as long as the
+// client is using the surface. Defined in the implementation file.
+class CefCapturedFrameLease;
 
 class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
  public:
@@ -24,6 +30,10 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   void SetFrameRate(base::TimeDelta frame_rate);
   void SizeChanged(const gfx::Size& size_in_pixels);
   void RequestRefreshFrame(const std::optional<gfx::Rect>& bounds_in_pixels);
+
+  // Release a surface leased to the client, returning the frame to the capture
+  // pool. Unknown or already released ids are ignored.
+  void ReleaseSurface(uint64_t surface_id);
 
  private:
   // viz::mojom::FrameSinkVideoConsumer implementation.
@@ -46,6 +56,11 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
 
   gfx::Size size_in_pixels_;
   std::optional<gfx::Rect> bounds_in_pixels_;
+
+  // Surfaces currently leased to the client, keyed by the id handed to it.
+  // Touched only on the thread that runs OnFrameCaptured and the release call,
+  // so it needs no lock.
+  std::map<uint64_t, std::unique_ptr<CefCapturedFrameLease>> leases_;
 };
 
 #endif  // LIBCEF_BROWSER_OSR_VIDEO_CONSUMER_OSR_H_

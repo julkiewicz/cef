@@ -404,6 +404,11 @@ void CefBrowserPlatformDelegate::SendExternalBeginFrame() {
   DCHECK(false);
 }
 
+void CefBrowserPlatformDelegate::ReleaseAcceleratedPaintSurface(
+    uint64_t surface_id) {
+  DCHECK(false);
+}
+
 void CefBrowserPlatformDelegate::SetWindowlessFrameRate(int frame_rate) {
   DCHECK(false);
 }

@@ -127,8 +127,9 @@ typedef struct _cef_window_info_t {
 
 ///
 /// Structure containing shared texture information for the OnAcceleratedPaint
-/// callback. Resources will be released to the underlying pool for reuse when
-/// the callback returns from client code.
+/// callback. Resources are returned to the underlying pool when the lease
+/// identified by |extra.surface_id| is released, or when the callback returns
+/// if no lease was granted.
 ///
 typedef struct _cef_accelerated_paint_info_t {
   ///

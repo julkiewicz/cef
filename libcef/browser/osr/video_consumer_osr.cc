@@ -127,6 +127,9 @@ void CefVideoConsumerOSR::OnFrameCaptured(
         callbacks) {
   auto lease = std::make_unique<CefCapturedFrameLease>(std::move(data),
                                                        std::move(callbacks));
+  // Ownership of the lease may move into leases_ below, so read the frame data
+  // through this rather than through the owning pointer.
+  CefCapturedFrameLease* const frame = lease.get();
 
   media::VideoFrameMetadata metadata = info->metadata;
   gfx::Rect damage_rect;
@@ -154,7 +157,7 @@ void CefVideoConsumerOSR::OnFrameCaptured(
 
   // If it is GPU Texture OSR.
   if (use_shared_texture_) {
-    CHECK(lease->data()->is_gpu_memory_buffer_handle() &&
+    CHECK(frame->data()->is_gpu_memory_buffer_handle() &&
           (info->pixel_format == media::PIXEL_FORMAT_ARGB ||
            info->pixel_format == media::PIXEL_FORMAT_ABGR));
 
@@ -200,8 +203,20 @@ void CefVideoConsumerOSR::OnFrameCaptured(
       extra.source_size = {size.width(), size.height()};
     }
 
+    // Lease the surface to the client so it can keep sampling the texture after
+    // this callback returns, rather than having to copy out of it here.
+    //
+    // Recorded before the callback runs, because releasing the previously
+    // leased surface from inside the callback is the expected pattern: the
+    // client always holds the surface it is currently displaying, so it can
+    // only let the old one go once the new one has arrived. A client that
+    // releases this id synchronously must therefore find it already present.
+    const uint64_t surface_id = next_surface_id_++;
+    extra.surface_id = surface_id;
+    leases_.emplace(surface_id, std::move(lease));
+
 #if BUILDFLAG(IS_WIN)
-    auto& gmb_handle = lease->data()->get_gpu_memory_buffer_handle();
+    auto& gmb_handle = frame->data()->get_gpu_memory_buffer_handle();
     cef_accelerated_paint_info_t paint_info = {
         sizeof(cef_accelerated_paint_info_t)};
     paint_info.extra = extra;
@@ -209,7 +224,7 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     paint_info.format = pixel_format;
     view_->OnAcceleratedPaint(damage_rect, info->coded_size, paint_info);
 #elif BUILDFLAG(IS_APPLE)
-    auto& gmb_handle = lease->data()->get_gpu_memory_buffer_handle();
+    auto& gmb_handle = frame->data()->get_gpu_memory_buffer_handle();
     cef_accelerated_paint_info_t paint_info = {
         sizeof(cef_accelerated_paint_info_t)};
     paint_info.extra = extra;
@@ -217,7 +232,7 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     paint_info.format = pixel_format;
     view_->OnAcceleratedPaint(damage_rect, info->coded_size, paint_info);
 #elif BUILDFLAG(IS_LINUX)
-    auto& gmb_handle = lease->data()->get_gpu_memory_buffer_handle();
+    auto& gmb_handle = frame->data()->get_gpu_memory_buffer_handle();
     auto& native_pixmap = gmb_handle.native_pixmap_handle();
     CHECK(native_pixmap.planes.size() <= kAcceleratedPaintMaxPlanes);
 
@@ -248,9 +263,9 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     return;
   }
 
-  CHECK(lease->data()->is_read_only_shmem_region());
+  CHECK(frame->data()->is_read_only_shmem_region());
   const base::ReadOnlySharedMemoryRegion& shmem_region =
-      lease->data()->get_read_only_shmem_region();
+      frame->data()->get_read_only_shmem_region();
 
   // The |data| parameter is not nullable and mojo type mapping for
   // `base::ReadOnlySharedMemoryRegion` defines that nullable version of it is

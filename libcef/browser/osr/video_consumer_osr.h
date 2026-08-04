@@ -61,6 +61,7 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   // Touched only on the thread that runs OnFrameCaptured and the release call,
   // so it needs no lock.
   std::map<uint64_t, std::unique_ptr<CefCapturedFrameLease>> leases_;
+  uint64_t next_surface_id_ = 1;
 };
 
 #endif  // LIBCEF_BROWSER_OSR_VIDEO_CONSUMER_OSR_H_

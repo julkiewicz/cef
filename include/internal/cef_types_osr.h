@@ -112,6 +112,17 @@ typedef struct _cef_accelerated_paint_info_common_t {
   ///
   uint8_t has_capture_counter;
 
+  ///
+  /// Opaque identifier for a leased surface, or 0 when no lease was granted.
+  ///
+  /// While a lease is held the surface is not returned to the capture pool and
+  /// its texture handle stays valid, so the client may keep sampling it after
+  /// the paint callback returns. A lease must be released once the surface is
+  /// no longer in use; the pool is small, and holding leases indefinitely
+  /// stalls capture.
+  ///
+  uint64_t surface_id;
+
 } cef_accelerated_paint_info_common_t;
 
 #ifdef __cplusplus

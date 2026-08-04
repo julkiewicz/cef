@@ -4,6 +4,8 @@
 
 #include "cef/libcef/browser/osr/video_consumer_osr.h"
 
+#include <memory>
+
 #include "cef/libcef/browser/osr/render_widget_host_view_osr.h"
 #include "media/base/video_frame_metadata.h"
 #include "media/capture/mojom/video_capture_buffer.mojom.h"
@@ -12,16 +14,34 @@
 
 namespace {
 
-// Helper to always call Done() at the end of OnFrameCaptured().
-class ScopedVideoFrameDone {
+// Owns everything that has to stay alive for as long as a captured frame is in
+// use, so that one object governs one lifetime:
+//
+//   - the callbacks remote, which returns the frame to the capture pool;
+//   - the buffer handle, which owns the shared texture handle handed to the
+//     client. It is a parameter of OnFrameCaptured() and would otherwise be
+//     destroyed on return, closing the handle even if the pool slot were held.
+//
+// Destroying the lease returns the frame. It is heap-allocated so that a later
+// change can let it outlive OnFrameCaptured(); today it is destroyed on return,
+// which is the behaviour it replaces.
+class CefCapturedFrameLease {
  public:
-  explicit ScopedVideoFrameDone(
+  CefCapturedFrameLease(
+      media::mojom::VideoBufferHandlePtr data,
       mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
           callbacks)
-      : callbacks_(std::move(callbacks)) {}
-  ~ScopedVideoFrameDone() { callbacks_->Done(); }
+      : data_(std::move(data)), callbacks_(std::move(callbacks)) {}
+
+  CefCapturedFrameLease(const CefCapturedFrameLease&) = delete;
+  CefCapturedFrameLease& operator=(const CefCapturedFrameLease&) = delete;
+
+  ~CefCapturedFrameLease() { callbacks_->Done(); }
+
+  const media::mojom::VideoBufferHandlePtr& data() const { return data_; }
 
  private:
+  media::mojom::VideoBufferHandlePtr data_;
   mojo::Remote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks> callbacks_;
 };
 
@@ -93,7 +113,8 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     const gfx::Rect& content_rect,
     mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
         callbacks) {
-  ScopedVideoFrameDone scoped_done(std::move(callbacks));
+  auto lease = std::make_unique<CefCapturedFrameLease>(std::move(data),
+                                                       std::move(callbacks));
 
   media::VideoFrameMetadata metadata = info->metadata;
   gfx::Rect damage_rect;
@@ -121,7 +142,7 @@ void CefVideoConsumerOSR::OnFrameCaptured(
 
   // If it is GPU Texture OSR.
   if (use_shared_texture_) {
-    CHECK(data->is_gpu_memory_buffer_handle() &&
+    CHECK(lease->data()->is_gpu_memory_buffer_handle() &&
           (info->pixel_format == media::PIXEL_FORMAT_ARGB ||
            info->pixel_format == media::PIXEL_FORMAT_ABGR));
 
@@ -168,7 +189,7 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     }
 
 #if BUILDFLAG(IS_WIN)
-    auto& gmb_handle = data->get_gpu_memory_buffer_handle();
+    auto& gmb_handle = lease->data()->get_gpu_memory_buffer_handle();
     cef_accelerated_paint_info_t paint_info = {
         sizeof(cef_accelerated_paint_info_t)};
     paint_info.extra = extra;
@@ -176,7 +197,7 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     paint_info.format = pixel_format;
     view_->OnAcceleratedPaint(damage_rect, info->coded_size, paint_info);
 #elif BUILDFLAG(IS_APPLE)
-    auto& gmb_handle = data->get_gpu_memory_buffer_handle();
+    auto& gmb_handle = lease->data()->get_gpu_memory_buffer_handle();
     cef_accelerated_paint_info_t paint_info = {
         sizeof(cef_accelerated_paint_info_t)};
     paint_info.extra = extra;
@@ -184,7 +205,7 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     paint_info.format = pixel_format;
     view_->OnAcceleratedPaint(damage_rect, info->coded_size, paint_info);
 #elif BUILDFLAG(IS_LINUX)
-    auto& gmb_handle = data->get_gpu_memory_buffer_handle();
+    auto& gmb_handle = lease->data()->get_gpu_memory_buffer_handle();
     auto& native_pixmap = gmb_handle.native_pixmap_handle();
     CHECK(native_pixmap.planes.size() <= kAcceleratedPaintMaxPlanes);
 
@@ -215,9 +236,9 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     return;
   }
 
-  CHECK(data->is_read_only_shmem_region());
-  base::ReadOnlySharedMemoryRegion& shmem_region =
-      data->get_read_only_shmem_region();
+  CHECK(lease->data()->is_read_only_shmem_region());
+  const base::ReadOnlySharedMemoryRegion& shmem_region =
+      lease->data()->get_read_only_shmem_region();
 
   // The |data| parameter is not nullable and mojo type mapping for
   // `base::ReadOnlySharedMemoryRegion` defines that nullable version of it is

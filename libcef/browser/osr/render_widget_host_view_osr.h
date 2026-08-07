@@ -248,6 +248,7 @@ class CefRenderWidgetHostViewOSR
   void OnScreenInfoChanged();
   void Invalidate(CefBrowserHost::PaintElementType type);
   void SendExternalBeginFrame();
+  void ReleaseAcceleratedPaintSurface(uint64_t surface_id);
   void SendKeyEvent(const input::NativeWebKeyboardEvent& event);
   void SendMouseEvent(const blink::WebMouseEvent& event);
   void SendMouseWheelEvent(const blink::WebMouseWheelEvent& event);

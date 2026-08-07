@@ -1170,6 +1170,13 @@ void CefRenderWidgetHostViewOSR::Invalidate(
   InvalidateInternal(gfx::Rect(SizeInPixels()));
 }
 
+void CefRenderWidgetHostViewOSR::ReleaseAcceleratedPaintSurface(
+    uint64_t surface_id) {
+  if (video_consumer_) {
+    video_consumer_->ReleaseSurface(surface_id);
+  }
+}
+
 void CefRenderWidgetHostViewOSR::SendExternalBeginFrame() {
   DCHECK(external_begin_frame_enabled_);
 

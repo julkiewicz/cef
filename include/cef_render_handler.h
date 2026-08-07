@@ -158,13 +158,16 @@ class CefRenderHandler : public virtual CefBaseRefCounted {
   /// opened with Metal or OpenGL, and on Linux it contains several planes, each
   /// with an fd to the underlying system native buffer.
   ///
-  /// The underlying implementation uses a pool to deliver frames. As a result,
-  /// the handle may differ every frame depending on how many frames are
-  /// in-progress. The handle's resource cannot be cached and cannot be accessed
-  /// outside of this callback. It should be reopened each time this callback is
-  /// executed and the contents should be copied to a texture owned by the
-  /// client application. The contents of |info| will be released back to the
-  /// pool after this callback returns.
+  /// The underlying implementation uses a pool to deliver frames, so the handle
+  /// may differ every frame depending on how many frames are in-progress.
+  ///
+  /// |info| carries a surface_id identifying a lease on the surface. While the
+  /// lease is held the surface is not returned to the pool and its handle stays
+  /// valid, so the handle may be opened once and sampled well after this
+  /// callback returns; there is no need to copy the contents here. Release the
+  /// lease with CefBrowserHost::ReleaseAcceleratedPaintSurface once the surface
+  /// is no longer in use. The pool is small, so a client that does not release
+  /// promptly will stall capture.
   ///
   /*--cef()--*/
   virtual void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser,

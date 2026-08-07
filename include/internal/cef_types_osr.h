@@ -34,6 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "include/cef_api_hash.h"
 #include "include/internal/cef_types_geometry.h"
 
 #ifdef __cplusplus
@@ -111,6 +112,19 @@ typedef struct _cef_accelerated_paint_info_common_t {
   /// Optional flag of capture_counter
   ///
   uint8_t has_capture_counter;
+
+#if CEF_API_ADDED(CEF_EXPERIMENTAL)
+  ///
+  /// Opaque identifier for a leased surface, or 0 when no lease was granted.
+  ///
+  /// While a lease is held the surface is not returned to the capture pool and
+  /// its texture handle stays valid, so the client may keep sampling it after
+  /// the paint callback returns. A lease must be released once the surface is
+  /// no longer in use; the pool is small, and holding leases indefinitely
+  /// stalls capture.
+  ///
+  uint64_t surface_id;
+#endif
 
 } cef_accelerated_paint_info_common_t;
 

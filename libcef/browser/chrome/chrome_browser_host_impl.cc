@@ -247,6 +247,11 @@ void ChromeBrowserHostImpl::SendExternalBeginFrame() {
   NOTIMPLEMENTED();
 }
 
+void ChromeBrowserHostImpl::ReleaseAcceleratedPaintSurface(
+    uint64_t surface_id) {
+  NOTIMPLEMENTED();
+}
+
 void ChromeBrowserHostImpl::SendTouchEvent(const CefTouchEvent& event) {
   NOTIMPLEMENTED();
 }

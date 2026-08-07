@@ -678,7 +678,9 @@ def GetAllPlatformConfigs(build_args, quiet=False):
   elif platform in ('windows', 'mac'):
     if machine == 'amd64' or os.environ.get('CEF_ENABLE_AMD64', '') == '1':
       supported_cpus.append('x64')
-      if platform == 'windows':
+      # ReadyM: we ship x64 only. Generating the x86 configuration also requires the x86 Debugging
+      # Tools for Windows, for output we never compile. Opt in with CEF_ENABLE_X86=1.
+      if platform == 'windows' and os.environ.get('CEF_ENABLE_X86', '') == '1':
         supported_cpus.append('x86')
     if machine == 'arm64' or os.environ.get('CEF_ENABLE_ARM64', '') == '1':
       supported_cpus.append('arm64')

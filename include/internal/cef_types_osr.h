@@ -124,6 +124,20 @@ typedef struct _cef_accelerated_paint_info_common_t {
   /// stalls capture.
   ///
   uint64_t surface_id;
+
+  ///
+  /// Identifier for the underlying pool surface, or 0 when unavailable.
+  ///
+  /// STABLE across paints: two paints carrying the same value are the same
+  /// underlying texture. Work a client does per surface, such as importing it
+  /// into a graphics API and wrapping it in a texture object of its own, can
+  /// therefore be done once and reused for as long as the browser lives.
+  ///
+  /// This is exactly what surface_id is NOT. That one identifies a LEASE and is
+  /// fresh on every paint, so per-surface work keyed on it is rebuilt every
+  /// frame. The capture pool is small, so these values stay small and dense.
+  ///
+  uint64_t pool_surface_id;
 #endif
 
 } cef_accelerated_paint_info_common_t;

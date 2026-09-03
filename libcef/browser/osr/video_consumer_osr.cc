@@ -221,6 +221,18 @@ void CefVideoConsumerOSR::OnFrameCaptured(
         sizeof(cef_accelerated_paint_info_t)};
     paint_info.extra = extra;
     paint_info.shared_texture_handle = gmb_handle.dxgi_handle().buffer_handle();
+
+    // Identify the surface behind the handle, so the client can do its
+    // per-surface work once instead of once per paint. The handle cannot serve
+    // for this: it is duplicated per delivery, so the same surface arrives
+    // under a different value each time. The token survives that duplication.
+    const auto& dxgi_token = gmb_handle.dxgi_handle().token();
+    const auto [pool_entry, added] =
+        pool_surface_ids_.emplace(dxgi_token, next_pool_surface_id_);
+    if (added) {
+      ++next_pool_surface_id_;
+    }
+    paint_info.extra.pool_surface_id = pool_entry->second;
     paint_info.format = pixel_format;
     view_->OnAcceleratedPaint(damage_rect, info->coded_size, paint_info);
 #elif BUILDFLAG(IS_APPLE)

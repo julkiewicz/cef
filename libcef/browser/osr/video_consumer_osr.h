@@ -7,8 +7,13 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "build/build_config.h"
 #include "components/viz/host/client_frame_sink_video_capturer.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "ui/gfx/gpu_memory_buffer_handle.h"
+#endif
 
 class CefRenderWidgetHostViewOSR;
 
@@ -62,6 +67,24 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   // so it needs no lock.
   std::map<uint64_t, std::unique_ptr<CefCapturedFrameLease>> leases_;
   uint64_t next_surface_id_ = 1;
+
+#if BUILDFLAG(IS_WIN)
+  // Stable identifiers for the capture pool's surfaces, assigned on first
+  // sight and kept for the life of the consumer.
+  //
+  // Keyed on the DXGI handle's token rather than on the handle itself, because
+  // the handle is duplicated per delivery and its value therefore differs
+  // between two paints of the same surface. gfx::DXGIHandle says so directly:
+  // the token is preserved across that duplication and is what callers should
+  // compare. Mapped to a small dense integer so Chromium's types stay out of
+  // the public structure.
+  //
+  // Bounded by the pool, which holds eleven frames. A resize builds a new pool
+  // and leaves the old entries behind; they are integers, and the consumer is
+  // recreated often enough that trimming them would cost more than it saves.
+  std::map<gfx::DXGIHandleToken, uint64_t> pool_surface_ids_;
+  uint64_t next_pool_surface_id_ = 1;
+#endif
 };
 
 #endif  // LIBCEF_BROWSER_OSR_VIDEO_CONSUMER_OSR_H_

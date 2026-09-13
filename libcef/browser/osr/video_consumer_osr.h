@@ -40,6 +40,12 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   // pool. Unknown or already released ids are ignored.
   void ReleaseSurface(uint64_t surface_id);
 
+  // Identifies this capture session to the client, so it can tell that the
+  // surfaces of an earlier one are gone rather than merely quiet. Taken from a
+  // process-wide counter at construction, because the thing that ends a session
+  // is this object being replaced.
+  uint64_t capture_session_id() const { return capture_session_id_; }
+
  private:
   // viz::mojom::FrameSinkVideoConsumer implementation.
   void OnFrameCaptured(
@@ -82,9 +88,18 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   // Bounded by the pool, which holds eleven frames. A resize builds a new pool
   // and leaves the old entries behind; they are integers, and the consumer is
   // recreated often enough that trimming them would cost more than it saves.
+  //
+  // The MAP is per consumer so that it is emptied with one. The COUNTER is not:
+  // it is process-wide, so a consumer that starts after this one cannot hand
+  // out a value this one already used for a different texture. That mattered:
+  // both used to live here, so every navigation restarted numbering from 1 and
+  // a client caching per surface served the previous document's textures.
   std::map<gfx::DXGIHandleToken, uint64_t> pool_surface_ids_;
-  uint64_t next_pool_surface_id_ = 1;
 #endif
+
+  // Identifies this capture session, from a process-wide counter, assigned once
+  // at construction.
+  const uint64_t capture_session_id_;
 };
 
 #endif  // LIBCEF_BROWSER_OSR_VIDEO_CONSUMER_OSR_H_

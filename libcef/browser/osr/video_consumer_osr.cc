@@ -4,6 +4,7 @@
 
 #include "cef/libcef/browser/osr/video_consumer_osr.h"
 
+#include <atomic>
 #include <memory>
 
 #include "cef/libcef/browser/osr/render_widget_host_view_osr.h"
@@ -11,6 +12,33 @@
 #include "media/capture/mojom/video_capture_buffer.mojom.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
 #include "ui/gfx/skbitmap_operations.h"
+
+namespace {
+
+// Both counters are PROCESS-WIDE on purpose. What a client caches per surface
+// outlives the consumer that described it, so a value only means something if
+// no later consumer can reuse it for something else. Consumers are created on
+// the UI thread, and paints are delivered on one sequence, but these are atomic
+// rather than relying on that: a wrong value here is a client sampling a
+// texture that is gone, which is not a failure worth being clever about.
+//
+// Zero is reserved as "unavailable", so both start at one.
+
+std::atomic<uint64_t> g_next_capture_session_id{1};
+
+uint64_t NextCaptureSessionId() {
+  return g_next_capture_session_id.fetch_add(1, std::memory_order_relaxed);
+}
+
+#if BUILDFLAG(IS_WIN)
+std::atomic<uint64_t> g_next_pool_surface_id{1};
+
+uint64_t NextPoolSurfaceId() {
+  return g_next_pool_surface_id.fetch_add(1, std::memory_order_relaxed);
+}
+#endif
+
+}  // namespace
 
 // Owns everything that has to stay alive for as long as a captured frame is in
 // use, so that one object governs one lifetime:
@@ -47,7 +75,8 @@ CefVideoConsumerOSR::CefVideoConsumerOSR(CefRenderWidgetHostViewOSR* view,
                                          bool use_shared_texture)
     : use_shared_texture_(use_shared_texture),
       view_(view),
-      video_capturer_(view->CreateVideoCapturer()) {
+      video_capturer_(view->CreateVideoCapturer()),
+      capture_session_id_(NextCaptureSessionId()) {
   video_capturer_->SetFormat(media::PIXEL_FORMAT_ARGB);
   video_capturer_->SetAnimationFpsLockIn(false, 0.0);
 
@@ -180,6 +209,8 @@ void CefVideoConsumerOSR::OnFrameCaptured(
                           content_rect.width(), content_rect.height()};
     extra.timestamp = info->timestamp.InMicroseconds();
 
+    extra.capture_session_id = capture_session_id_;
+
     extra.has_capture_counter = info->metadata.capture_counter.has_value();
     extra.has_capture_update_rect =
         info->metadata.capture_update_rect.has_value();
@@ -226,11 +257,15 @@ void CefVideoConsumerOSR::OnFrameCaptured(
     // per-surface work once instead of once per paint. The handle cannot serve
     // for this: it is duplicated per delivery, so the same surface arrives
     // under a different value each time. The token survives that duplication.
+    //
+    // The counter behind these values is process-wide, so a value is never
+    // handed out twice for different textures even across consumers. The map
+    // stays per consumer, so it is emptied when one goes away.
     const auto& dxgi_token = gmb_handle.dxgi_handle().token();
-    const auto [pool_entry, added] =
-        pool_surface_ids_.emplace(dxgi_token, next_pool_surface_id_);
-    if (added) {
-      ++next_pool_surface_id_;
+    auto pool_entry = pool_surface_ids_.find(dxgi_token);
+    if (pool_entry == pool_surface_ids_.end()) {
+      pool_entry = pool_surface_ids_.emplace(dxgi_token, NextPoolSurfaceId())
+                       .first;
     }
     paint_info.extra.pool_surface_id = pool_entry->second;
     paint_info.format = pixel_format;

@@ -128,16 +128,34 @@ typedef struct _cef_accelerated_paint_info_common_t {
   ///
   /// Identifier for the underlying pool surface, or 0 when unavailable.
   ///
-  /// STABLE across paints: two paints carrying the same value are the same
-  /// underlying texture. Work a client does per surface, such as importing it
-  /// into a graphics API and wrapping it in a texture object of its own, can
-  /// therefore be done once and reused for as long as the browser lives.
+  /// STABLE across paints and NEVER REUSED: two paints carrying the same value
+  /// are the same underlying texture, and a value once retired is not handed
+  /// out again for a different one. Work a client does per surface, such as
+  /// importing it into a graphics API and wrapping it in a texture object of
+  /// its own, can therefore be done once and reused.
   ///
   /// This is exactly what surface_id is NOT. That one identifies a LEASE and is
   /// fresh on every paint, so per-surface work keyed on it is rebuilt every
-  /// frame. The capture pool is small, so these values stay small and dense.
+  /// frame.
   ///
   uint64_t pool_surface_id;
+
+  ///
+  /// Identifies the capture session a paint belongs to, or 0 when unavailable.
+  ///
+  /// Every paint of one session carries the same value, and the value changes
+  /// when capture is rebuilt, which happens on navigation and on resize. A new
+  /// session's surfaces are new textures, so ANYTHING a client keeps per
+  /// surface from an older session can never be asked for again and should be
+  /// released when this value changes.
+  ///
+  /// Without it a client cannot tell "no more paints of that surface for now"
+  /// from "that surface is gone", and keeping per-surface work for the second
+  /// case costs a texture's worth of video memory per navigation. Reading a
+  /// restart out of capture_counter approximates this and is not the same
+  /// thing: that counter describes frames, not surface lifetime.
+  ///
+  uint64_t capture_session_id;
 #endif
 
 } cef_accelerated_paint_info_common_t;

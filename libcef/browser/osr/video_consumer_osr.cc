@@ -107,6 +107,15 @@ void CefVideoConsumerOSR::ReleaseSurface(uint64_t surface_id) {
   leases_.erase(surface_id);
 }
 
+void CefVideoConsumerOSR::OnCaptureBuffersRetired() {
+  // The pool threw away every buffer it had handed out, so the ids mapped to
+  // them describe nothing. Dropping the map is what stops a new surface
+  // inheriting a retired id, and the new session id is what tells the client to
+  // release what it built over the old ones.
+  pool_surface_ids_.clear();
+  capture_session_id_ = NextCaptureSessionId();
+}
+
 void CefVideoConsumerOSR::SetActive(bool active) {
   if (active) {
     video_capturer_->Start(

@@ -55,6 +55,13 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
       mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
           callbacks) override;
   void OnFrameWithEmptyRegionCapture() override {}
+
+  // Every surface handed out so far is permanently retired, which happens when
+  // the capture pool is rebuilt after GPU context loss. The ids must not be
+  // reused for the new pool's surfaces, and the client must be told so it can
+  // release whatever it imported from the old ones.
+  void OnCaptureBuffersRetired() override;
+
   void OnStopped() override {}
   void OnLog(const std::string& message) override {}
   void OnNewCaptureVersion(
@@ -97,9 +104,13 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   std::map<gfx::DXGIHandleToken, uint64_t> pool_surface_ids_;
 #endif
 
-  // Identifies this capture session, from a process-wide counter, assigned once
-  // at construction.
-  const uint64_t capture_session_id_;
+  // Identifies the current generation of surfaces, from a process-wide counter.
+  //
+  // Assigned at construction and again whenever the pool retires its buffers.
+  // NOT const for that reason: the value has to move when the surfaces behind
+  // it do, which is the only thing that makes it useful to a client caching
+  // work per surface.
+  uint64_t capture_session_id_;
 };
 
 #endif  // LIBCEF_BROWSER_OSR_VIDEO_CONSUMER_OSR_H_

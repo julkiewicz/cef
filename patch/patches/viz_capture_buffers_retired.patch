@@ -1,0 +1,231 @@
+diff --git a/chrome/browser/devtools/devtools_eye_dropper.h b/chrome/browser/devtools/devtools_eye_dropper.h
+index e0f979c7ff..9c3fe9df14 100644
+--- a/chrome/browser/devtools/devtools_eye_dropper.h
++++ b/chrome/browser/devtools/devtools_eye_dropper.h
+@@ -57,6 +57,8 @@ class DevToolsEyeDropper : public content::WebContentsObserver,
+   void OnNewCaptureVersion(
+       const media::CaptureVersion& capture_version) override;
+   void OnFrameWithEmptyRegionCapture() override;
++  // Keeps no per-buffer state, so retirement needs no action.
++  void OnCaptureBuffersRetired() override {}
+   void OnStopped() override;
+   void OnLog(const std::string& /*message*/) override {}
+ 
+diff --git a/chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h b/chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h
+index fb115cc952..f6033da693 100644
+--- a/chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h
++++ b/chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h
+@@ -49,6 +49,8 @@ class BackgroundThumbnailVideoCapturer
+   void OnNewCaptureVersion(
+       const media::CaptureVersion& capture_version) override;
+   void OnFrameWithEmptyRegionCapture() override;
++  // Keeps no per-buffer state, so retirement needs no action.
++  void OnCaptureBuffersRetired() override {}
+   void OnStopped() override;
+   void OnLog(const std::string& /*message*/) override;
+ 
+diff --git a/components/viz/host/client_frame_sink_video_capturer.cc b/components/viz/host/client_frame_sink_video_capturer.cc
+index d8900ae9eb..52889ece76 100644
+--- a/components/viz/host/client_frame_sink_video_capturer.cc
++++ b/components/viz/host/client_frame_sink_video_capturer.cc
+@@ -195,6 +195,12 @@ void ClientFrameSinkVideoCapturer::OnLog(const std::string& message) {
+   consumer_->OnLog(message);
+ }
+ 
++void ClientFrameSinkVideoCapturer::OnCaptureBuffersRetired() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++
++  consumer_->OnCaptureBuffersRetired();
++}
++
+ void ClientFrameSinkVideoCapturer::OnStopped() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+diff --git a/components/viz/host/client_frame_sink_video_capturer.h b/components/viz/host/client_frame_sink_video_capturer.h
+index 2fde9abef0..8b5f700363 100644
+--- a/components/viz/host/client_frame_sink_video_capturer.h
++++ b/components/viz/host/client_frame_sink_video_capturer.h
+@@ -134,6 +134,7 @@ class VIZ_HOST_EXPORT ClientFrameSinkVideoCapturer
+           callbacks) final;
+   void OnNewCaptureVersion(const media::CaptureVersion& capture_version) final;
+   void OnFrameWithEmptyRegionCapture() final;
++  void OnCaptureBuffersRetired() final;
+   void OnStopped() final;
+   void OnLog(const std::string& message) final;
+   // Establishes connection to FrameSinkVideoCapturer and sends the existing
+diff --git a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
+index c63c52835a..8d24b5202d 100644
+--- a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
++++ b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
+@@ -913,6 +913,25 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
+     frame = frame_pool_->ReserveVideoFrame(pixel_format_, capture_size);
+   }
+ 
++  // BEFORE the frame below is delivered, because a consumer told afterwards
++  // would already have imported a buffer from the new generation and would
++  // then throw it away along with the old ones.
++  //
++  // The pool rebuilds itself on GPU context loss and every buffer it had handed
++  // out is permanently retired at that moment. Nothing else conveys this: Done()
++  // returns a frame for REUSE, and a consumer that imported the underlying
++  // shared image holds that memory alive on its own, so the pool dropping its
++  // reference does not free it.
++  if (frame_pool_) {
++    const uint32_t pool_generation = frame_pool_->generation();
++    if (pool_generation != reported_pool_generation_) {
++      reported_pool_generation_ = pool_generation;
++      if (consumer_) {
++        consumer_->OnCaptureBuffersRetired();
++      }
++    }
++  }
++
+   UMA_HISTOGRAM_BOOLEAN("Viz.FrameSinkVideoCapturer.FrameResurrected",
+                         can_resurrect_content);
+ 
+diff --git a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h
+index 6aa3f8e4fb..99ff9d3a5d 100644
+--- a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h
++++ b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h
+@@ -542,6 +542,11 @@ class VIZ_SERVICE_EXPORT FrameSinkVideoCapturerImpl final
+ 
+   // The current version of the capture, indicating source-changes and the
+   // application of sub-capture.
++  // The buffer generation the consumer has been told about. The pool discards
++  // every buffer it owns when it is rebuilt after GPU context loss, and the
++  // consumer is told once per change rather than per frame.
++  uint32_t reported_pool_generation_ = 0;
++
+   const uint32_t capture_version_source_;
+   uint32_t capture_version_sub_capture_ = 0;
+ 
+diff --git a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc
+index 588fd7ca94..934cd3ea18 100644
+--- a/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc
++++ b/components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc
+@@ -222,6 +222,7 @@ class MockConsumer : public mojom::FrameSinkVideoConsumer {
+ 
+   MOCK_METHOD0(OnFrameCapturedMock, void());
+   MOCK_METHOD1(OnNewCaptureVersion, void(const media::CaptureVersion&));
++  MOCK_METHOD0(OnCaptureBuffersRetired, void());
+   MOCK_METHOD0(OnStopped, void());
+   MOCK_METHOD1(OnLog, void(const std::string&));
+ 
+diff --git a/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc b/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc
+index 35d0201b15..5e42b8023c 100644
+--- a/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc
++++ b/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc
+@@ -66,6 +66,12 @@ MappableSharedImageVideoFramePool::CloneHandleForDelivery(
+       std::move(handle));
+ }
+ 
++uint32_t MappableSharedImageVideoFramePool::generation() const {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++
++  return video_frame_pool_generation_;
++}
++
+ size_t MappableSharedImageVideoFramePool::GetNumberOfReservedFrames() const {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+diff --git a/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h b/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h
+index 3ae88d4b4c..f1917a6401 100644
+--- a/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h
++++ b/components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h
+@@ -46,6 +46,10 @@ class VIZ_SERVICE_EXPORT MappableSharedImageVideoFramePool
+ 
+   size_t GetNumberOfReservedFrames() const override;
+ 
++  // This pool rebuilds itself on GPU context loss, discarding every buffer it
++  // had handed out, so it reports the generation it is on.
++  uint32_t generation() const override;
++
+   // Returns the buffer format preference used to configure this pool.
+   // This can be used in tests to verify how the pool was initialized.
+   mojom::BufferFormatPreference buffer_format_preference() const {
+diff --git a/components/viz/service/frame_sinks/video_capture/video_frame_pool.cc b/components/viz/service/frame_sinks/video_capture/video_frame_pool.cc
+index 54a6b5121e..51f9f43187 100644
+--- a/components/viz/service/frame_sinks/video_capture/video_frame_pool.cc
++++ b/components/viz/service/frame_sinks/video_capture/video_frame_pool.cc
+@@ -9,6 +9,10 @@
+ 
+ namespace viz {
+ 
++uint32_t VideoFramePool::generation() const {
++  return 0;
++}
++
+ VideoFramePool::VideoFramePool(int capacity)
+     : capacity_(std::max(0, capacity)) {
+   CHECK_GT(capacity_, 0u);
+diff --git a/components/viz/service/frame_sinks/video_capture/video_frame_pool.h b/components/viz/service/frame_sinks/video_capture/video_frame_pool.h
+index 3a1a512f0d..c19d155f21 100644
+--- a/components/viz/service/frame_sinks/video_capture/video_frame_pool.h
++++ b/components/viz/service/frame_sinks/video_capture/video_frame_pool.h
+@@ -55,6 +55,18 @@ class VIZ_SERVICE_EXPORT VideoFramePool {
+ 
+   size_t capacity() const { return capacity_; }
+ 
++  // Which generation of buffers this pool is currently handing out.
++  //
++  // A pool may discard every buffer it owns and start again, which happens on
++  // GPU context loss. Buffers from an earlier generation are PERMANENTLY
++  // retired: they will never be delivered again. A consumer that keeps
++  // per-buffer state has no other way to learn that, because returning a frame
++  // only makes it available for reuse and says nothing about the buffer being
++  // destroyed.
++  //
++  // Pools that never discard buffers leave this at zero.
++  virtual uint32_t generation() const;
++
+  protected:
+   // |capacity| is the maximum number of pooled VideoFrames; but they can be of
+   // any byte size.
+diff --git a/content/browser/devtools/devtools_video_consumer.h b/content/browser/devtools/devtools_video_consumer.h
+index 549877b42f..721ddb0856 100644
+--- a/content/browser/devtools/devtools_video_consumer.h
++++ b/content/browser/devtools/devtools_video_consumer.h
+@@ -75,6 +75,8 @@ class CONTENT_EXPORT DevToolsVideoConsumer
+   void OnNewCaptureVersion(
+       const media::CaptureVersion& capture_version) override {}
+   void OnFrameWithEmptyRegionCapture() override {}
++  // Keeps no per-buffer state, so retirement needs no action.
++  void OnCaptureBuffersRetired() override {}
+   void OnStopped() override;
+   void OnLog(const std::string& /*message*/) override {}
+ 
+diff --git a/content/browser/media/capture/frame_sink_video_capture_device.h b/content/browser/media/capture/frame_sink_video_capture_device.h
+index 25af899ea9..faf65675f8 100644
+--- a/content/browser/media/capture/frame_sink_video_capture_device.h
++++ b/content/browser/media/capture/frame_sink_video_capture_device.h
+@@ -104,6 +104,8 @@ class CONTENT_EXPORT FrameSinkVideoCaptureDevice
+           callbacks) override;
+   void OnNewCaptureVersion(const media::CaptureVersion& capture_version) final;
+   void OnFrameWithEmptyRegionCapture() final;
++  // Keeps no per-buffer state, so retirement needs no action.
++  void OnCaptureBuffersRetired() final {}
+   void OnStopped() final;
+   void OnLog(const std::string& message) final;
+ 
+diff --git a/services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom b/services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom
+index 0cbf840adc..c60893b7bc 100644
+--- a/services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom
++++ b/services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom
+@@ -79,6 +79,17 @@ interface FrameSinkVideoConsumer {
+   // we always draw the blue border around the entire tab's viewport.
+   OnFrameWithEmptyRegionCapture();
+ 
++  // Called when every buffer delivered so far has been PERMANENTLY RETIRED,
++  // which happens when the capture frame pool is rebuilt after GPU context
++  // loss. Buffers from before this call will never be delivered again.
++  //
++  // A consumer that keeps per-buffer state, such as a graphics-API import of a
++  // delivered shared image, must drop it here. Nothing else says so: returning
++  // a frame with Done() only makes it available for reuse, and a consumer that
++  // imported the underlying image holds that memory alive independently of the
++  // pool, so the pool discarding its own reference does not free it.
++  OnCaptureBuffersRetired();
++
+   // Indicates that OnFrameCaptured() will not be called again, an end-of-stream
+   // signal.
+   OnStopped();

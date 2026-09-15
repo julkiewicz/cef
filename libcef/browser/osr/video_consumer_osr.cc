@@ -107,6 +107,10 @@ void CefVideoConsumerOSR::ReleaseSurface(uint64_t surface_id) {
   leases_.erase(surface_id);
 }
 
+void CefVideoConsumerOSR::SetSpareSurfaces(uint32_t count) {
+  video_capturer_->SetMaxSpareBuffers(count);
+}
+
 void CefVideoConsumerOSR::OnCaptureBuffersRetired() {
   // The pool threw away every buffer it had handed out, so the ids mapped to
   // them describe nothing. Dropping the map is what stops a new surface

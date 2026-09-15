@@ -252,6 +252,10 @@ void ChromeBrowserHostImpl::ReleaseAcceleratedPaintSurface(
   NOTIMPLEMENTED();
 }
 
+void ChromeBrowserHostImpl::SetAcceleratedPaintSpareSurfaces(uint32_t count) {
+  NOTIMPLEMENTED();
+}
+
 void ChromeBrowserHostImpl::SendTouchEvent(const CefTouchEvent& event) {
   NOTIMPLEMENTED();
 }

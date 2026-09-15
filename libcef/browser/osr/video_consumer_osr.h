@@ -40,6 +40,11 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   // pool. Unknown or already released ids are ignored.
   void ReleaseSurface(uint64_t surface_id);
 
+  // Ask the capture pool to keep |count| surfaces spare for reuse, so that a
+  // client holding several leases at once does not make the pool destroy and
+  // reallocate one per cycle. Applies to the pool that exists now.
+  void SetSpareSurfaces(uint32_t count);
+
   // Identifies this capture session to the client, so it can tell that the
   // surfaces of an earlier one are gone rather than merely quiet. Taken from a
   // process-wide counter at construction, because the thing that ends a session

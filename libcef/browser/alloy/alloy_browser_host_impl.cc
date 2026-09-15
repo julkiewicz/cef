@@ -428,6 +428,25 @@ void AlloyBrowserHostImpl::ReleaseAcceleratedPaintSurface(uint64_t surface_id) {
   }
 }
 
+void AlloyBrowserHostImpl::SetAcceleratedPaintSpareSurfaces(uint32_t count) {
+  if (!IsWindowless()) {
+    DCHECK(false) << "Window rendering is not disabled";
+    return;
+  }
+
+  if (!CEF_CURRENTLY_ON_UIT()) {
+    CEF_POST_TASK(CEF_UIT,
+                  base::BindOnce(
+                      &AlloyBrowserHostImpl::SetAcceleratedPaintSpareSurfaces,
+                      this, count));
+    return;
+  }
+
+  if (platform_delegate_) {
+    platform_delegate_->SetAcceleratedPaintSpareSurfaces(count);
+  }
+}
+
 void AlloyBrowserHostImpl::SendTouchEvent(const CefTouchEvent& event) {
   if (!IsWindowless()) {
     DCHECK(false) << "Window rendering is not disabled";

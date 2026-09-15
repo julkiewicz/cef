@@ -1177,6 +1177,17 @@ void CefRenderWidgetHostViewOSR::ReleaseAcceleratedPaintSurface(
   }
 }
 
+void CefRenderWidgetHostViewOSR::SetAcceleratedPaintSpareSurfaces(
+    uint32_t count) {
+  // Dropped when there is no consumer, which is the case until the view is
+  // first shown. Nothing is remembered on purpose: the pool this would apply to
+  // does not exist yet, and the client is told to set this again per capture
+  // session, the first of which arrives with the first paint.
+  if (video_consumer_) {
+    video_consumer_->SetSpareSurfaces(count);
+  }
+}
+
 void CefRenderWidgetHostViewOSR::SendExternalBeginFrame() {
   DCHECK(external_begin_frame_enabled_);
 

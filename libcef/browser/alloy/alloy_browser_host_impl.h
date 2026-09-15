@@ -88,6 +88,7 @@ class AlloyBrowserHostImpl : public CefBrowserHostBase,
   void Invalidate(PaintElementType type) override;
   void SendExternalBeginFrame() override;
   void ReleaseAcceleratedPaintSurface(uint64_t surface_id) override;
+  void SetAcceleratedPaintSpareSurfaces(uint32_t count) override;
   void SendTouchEvent(const CefTouchEvent& event) override;
   void SendCaptureLostEvent() override;
   int GetWindowlessFrameRate() override;

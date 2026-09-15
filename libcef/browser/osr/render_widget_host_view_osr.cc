@@ -1177,6 +1177,17 @@ void CefRenderWidgetHostViewOSR::ReleaseAcceleratedPaintSurface(
   }
 }
 
+void CefRenderWidgetHostViewOSR::SetAcceleratedPaintSpareSurfaces(
+    uint32_t count) {
+  // Dropped when there is no consumer, which is the case until the view is
+  // first shown. Nothing is remembered on purpose: the pool this would apply to
+  // does not exist yet, and the client is told to set this again per capture
+  // session, the first of which arrives with the first paint.
+  if (video_consumer_) {
+    video_consumer_->SetSpareSurfaces(count);
+  }
+}
+
 void CefRenderWidgetHostViewOSR::SendExternalBeginFrame() {
   DCHECK(external_begin_frame_enabled_);
 
@@ -1646,6 +1657,28 @@ void CefRenderWidgetHostViewOSR::OnPaint(const gfx::Rect& damage_rect,
       ReleaseResizeHold();
     }
   }
+}
+
+void CefRenderWidgetHostViewOSR::OnAcceleratedPaintSurfaceRetired(
+    uint64_t pool_surface_id) {
+  TRACE_EVENT0("cef",
+               "CefRenderWidgetHostViewOSR::OnAcceleratedPaintSurfaceRetired");
+
+  // Deliberately NOT gated on |is_showing_|, unlike OnAcceleratedPaint: a
+  // hidden view still has to let go of a surface that no longer exists, and
+  // dropping the message would strand whatever the client imported from it.
+  if (!browser_impl_ || !browser_impl_->client()) {
+    return;
+  }
+
+  CefRefPtr<CefRenderHandler> handler =
+      browser_impl_->client()->GetRenderHandler();
+  if (!handler) {
+    return;
+  }
+
+  handler->OnAcceleratedPaintSurfaceRetired(browser_impl_.get(),
+                                            pool_surface_id);
 }
 
 void CefRenderWidgetHostViewOSR::OnAcceleratedPaint(

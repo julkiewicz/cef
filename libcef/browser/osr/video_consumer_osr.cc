@@ -107,6 +107,10 @@ void CefVideoConsumerOSR::ReleaseSurface(uint64_t surface_id) {
   leases_.erase(surface_id);
 }
 
+void CefVideoConsumerOSR::SetSpareSurfaces(uint32_t count) {
+  video_capturer_->SetMaxSpareBuffers(count);
+}
+
 void CefVideoConsumerOSR::OnCaptureBuffersRetired() {
   // The pool threw away every buffer it had handed out, so the ids mapped to
   // them describe nothing. Dropping the map is what stops a new surface
@@ -114,6 +118,31 @@ void CefVideoConsumerOSR::OnCaptureBuffersRetired() {
   // release what it built over the old ones.
   pool_surface_ids_.clear();
   capture_session_id_ = NextCaptureSessionId();
+}
+
+void CefVideoConsumerOSR::OnCaptureBufferRetired(
+    const base::UnguessableToken& buffer_token) {
+#if BUILDFLAG(IS_WIN)
+  // A token can only be empty if it never identified anything, so there is
+  // nothing to look up and DXGIHandleToken refuses to hold one.
+  if (buffer_token.is_empty()) {
+    return;
+  }
+
+  // A surface the client was never shown has no id of its own and nothing was
+  // built over it, so its retirement is not the client's business.
+  const auto entry = pool_surface_ids_.find(gfx::DXGIHandleToken(buffer_token));
+  if (entry == pool_surface_ids_.end()) {
+    return;
+  }
+
+  const uint64_t pool_surface_id = entry->second;
+  pool_surface_ids_.erase(entry);
+
+  // Erased before the client is told, so that a client releasing its own state
+  // from inside the callback finds a map that already agrees with it.
+  view_->OnAcceleratedPaintSurfaceRetired(pool_surface_id);
+#endif
 }
 
 void CefVideoConsumerOSR::SetActive(bool active) {

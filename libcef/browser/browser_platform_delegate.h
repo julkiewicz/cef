@@ -319,6 +319,10 @@ class CefBrowserPlatformDelegate {
   // rendering.
   virtual void ReleaseAcceleratedPaintSurface(uint64_t surface_id);
 
+  // Ask the capture pool to keep |count| spare surfaces. Only used with
+  // windowless rendering.
+  virtual void SetAcceleratedPaintSpareSurfaces(uint32_t count);
+
   // Set the windowless frame rate. Only used with windowless rendering.
   virtual void SetWindowlessFrameRate(int frame_rate);
 

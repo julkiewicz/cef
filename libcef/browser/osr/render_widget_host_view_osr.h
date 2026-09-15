@@ -249,6 +249,7 @@ class CefRenderWidgetHostViewOSR
   void Invalidate(CefBrowserHost::PaintElementType type);
   void SendExternalBeginFrame();
   void ReleaseAcceleratedPaintSurface(uint64_t surface_id);
+  void SetAcceleratedPaintSpareSurfaces(uint32_t count);
   void SendKeyEvent(const input::NativeWebKeyboardEvent& event);
   void SendMouseEvent(const blink::WebMouseEvent& event);
   void SendMouseWheelEvent(const blink::WebMouseWheelEvent& event);
@@ -264,6 +265,7 @@ class CefRenderWidgetHostViewOSR
   void OnAcceleratedPaint(const gfx::Rect& damage_rect,
                           const gfx::Size& pixel_size,
                           const CefAcceleratedPaintInfo& info);
+  void OnAcceleratedPaintSurfaceRetired(uint64_t pool_surface_id);
 
   void OnBeginFame(base::TimeTicks frame_time);
 

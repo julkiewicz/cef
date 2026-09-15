@@ -60,6 +60,7 @@ class CefBrowserPlatformDelegateOsr
   void Invalidate(cef_paint_element_type_t type) override;
   void SendExternalBeginFrame() override;
   void ReleaseAcceleratedPaintSurface(uint64_t surface_id) override;
+  void SetAcceleratedPaintSpareSurfaces(uint32_t count) override;
   void SetWindowlessFrameRate(int frame_rate) override;
   void ImeSetComposition(const CefString& text,
                          const std::vector<CefCompositionUnderline>& underlines,

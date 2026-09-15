@@ -2,7 +2,16 @@ diff --git chrome/browser/devtools/devtools_eye_dropper.h chrome/browser/devtool
 index e0f979c7ffc8aa2a0fb9fdfd16a9f43fe2d96f3c..3470793959f603a964d9214a928353d86536ee23 100644
 --- chrome/browser/devtools/devtools_eye_dropper.h
 +++ chrome/browser/devtools/devtools_eye_dropper.h
-@@ -57,6 +57,9 @@ class DevToolsEyeDropper : public content::WebContentsObserver,
+@@ -48,24 +48,27 @@ class DevToolsEyeDropper : public content::WebContentsObserver,
+   void UpdateCursor();
+ 
+   // viz::mojom::FrameSinkVideoConsumer implementation.
+   void OnFrameCaptured(
+       ::media::mojom::VideoBufferHandlePtr data,
+       ::media::mojom::VideoFrameInfoPtr info,
+       const gfx::Rect& content_rect,
+       mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+           callbacks) override;
    void OnNewCaptureVersion(
        const media::CaptureVersion& capture_version) override;
    void OnFrameWithEmptyRegionCapture() override;
@@ -12,11 +21,29 @@ index e0f979c7ffc8aa2a0fb9fdfd16a9f43fe2d96f3c..3470793959f603a964d9214a928353d8
    void OnStopped() override;
    void OnLog(const std::string& /*message*/) override {}
  
+   EyeDropperCallback callback_;
+   SkBitmap frame_;
+   int last_cursor_x_ = -1;
+   int last_cursor_y_ = -1;
+   content::RenderWidgetHost::MouseEventCallback mouse_event_callback_;
+   raw_ptr<content::RenderWidgetHost> host_ = nullptr;
+   std::unique_ptr<viz::ClientFrameSinkVideoCapturer> video_capturer_;
+   base::WeakPtrFactory<DevToolsEyeDropper> weak_factory_{this};
+ };
 diff --git chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h
 index fb115cc9524983917e770107db434e5a10450a33..9253c28daffef9cd170720822b448182b42e5d92 100644
 --- chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h
 +++ chrome/browser/ui/thumbnails/background_thumbnail_video_capturer.h
-@@ -49,6 +49,9 @@ class BackgroundThumbnailVideoCapturer
+@@ -40,24 +40,27 @@ class BackgroundThumbnailVideoCapturer
+ 
+  private:
+   // viz::mojom::FrameSinkVideoConsumer:
+   void OnFrameCaptured(
+       ::media::mojom::VideoBufferHandlePtr data,
+       ::media::mojom::VideoFrameInfoPtr info,
+       const gfx::Rect& content_rect,
+       mojo::PendingRemote<::viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+           callbacks) override;
    void OnNewCaptureVersion(
        const media::CaptureVersion& capture_version) override;
    void OnFrameWithEmptyRegionCapture() override;
@@ -26,11 +53,29 @@ index fb115cc9524983917e770107db434e5a10450a33..9253c28daffef9cd170720822b448182
    void OnStopped() override;
    void OnLog(const std::string& /*message*/) override;
  
+   const raw_ptr<content::WebContents> contents_;
+   GotFrameCallback got_frame_callback_;
+ 
+   ThumbnailCaptureInfo capture_info_;
+   std::unique_ptr<viz::ClientFrameSinkVideoCapturer> video_capturer_;
+ 
+   // Tracked for metrics and tracing
+   base::TimeTicks start_time_;
+   int num_received_frames_ = 0;
 diff --git components/viz/host/client_frame_sink_video_capturer.cc components/viz/host/client_frame_sink_video_capturer.cc
 index d8900ae9ebe4e40c17f55c938ab79b73599047ae..5f399d558f451c9f569dfadc706274db02d491cf 100644
 --- components/viz/host/client_frame_sink_video_capturer.cc
 +++ components/viz/host/client_frame_sink_video_capturer.cc
-@@ -195,6 +195,19 @@ void ClientFrameSinkVideoCapturer::OnLog(const std::string& message) {
+@@ -186,24 +186,37 @@ void ClientFrameSinkVideoCapturer::OnNewCaptureVersion(
+     const media::CaptureVersion& capture_version) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+   consumer_->OnNewCaptureVersion(capture_version);
+ }
+ 
+ void ClientFrameSinkVideoCapturer::OnLog(const std::string& message) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
    consumer_->OnLog(message);
  }
  
@@ -50,11 +95,29 @@ index d8900ae9ebe4e40c17f55c938ab79b73599047ae..5f399d558f451c9f569dfadc706274db
  void ClientFrameSinkVideoCapturer::OnStopped() {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
  
+   consumer_->OnStopped();
+ }
+ 
+ void ClientFrameSinkVideoCapturer::EstablishConnection() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+   capturer_remote_.reset();
+   establish_connection_callback_.Run(
+       capturer_remote_.BindNewPipeAndPassReceiver());
 diff --git components/viz/host/client_frame_sink_video_capturer.h components/viz/host/client_frame_sink_video_capturer.h
 index 2fde9abef07e90ce41f7dbac4d7fbcd2bcedda3d..1832be6b5e9d99decdd1cc164dd0952e3387466a 100644
 --- components/viz/host/client_frame_sink_video_capturer.h
 +++ components/viz/host/client_frame_sink_video_capturer.h
-@@ -13,6 +13,7 @@
+@@ -4,24 +4,25 @@
+ 
+ #ifndef COMPONENTS_VIZ_HOST_CLIENT_FRAME_SINK_VIDEO_CAPTURER_H_
+ #define COMPONENTS_VIZ_HOST_CLIENT_FRAME_SINK_VIDEO_CAPTURER_H_
+ 
+ #include <memory>
+ #include <string>
+ #include <vector>
+ 
+ #include "base/functional/callback.h"
  #include "base/memory/raw_ptr.h"
  #include "base/sequence_checker.h"
  #include "base/time/time.h"
@@ -62,7 +125,25 @@ index 2fde9abef07e90ce41f7dbac4d7fbcd2bcedda3d..1832be6b5e9d99decdd1cc164dd0952e
  #include "components/viz/common/surfaces/frame_sink_id.h"
  #include "components/viz/common/surfaces/video_capture_target.h"
  #include "components/viz/host/viz_host_export.h"
-@@ -134,6 +135,9 @@ class VIZ_HOST_EXPORT ClientFrameSinkVideoCapturer
+ #include "media/base/video_types.h"
+ #include "mojo/public/cpp/bindings/pending_receiver.h"
+ #include "mojo/public/cpp/bindings/receiver.h"
+ #include "mojo/public/cpp/bindings/remote.h"
+ #include "services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom.h"
+ #include "third_party/skia/include/core/SkBitmap.h"
+ #include "ui/gfx/geometry/rect_f.h"
+ #include "ui/gfx/geometry/size.h"
+ 
+@@ -125,24 +126,27 @@ class VIZ_HOST_EXPORT ClientFrameSinkVideoCapturer
+     bool use_fixed_aspect_ratio;
+   };
+ 
+   // mojom::FrameSinkVideoConsumer implementation.
+   void OnFrameCaptured(
+       media::mojom::VideoBufferHandlePtr data,
+       media::mojom::VideoFrameInfoPtr info,
+       const gfx::Rect& content_rect,
+       mojo::PendingRemote<mojom::FrameSinkVideoConsumerFrameCallbacks>
            callbacks) final;
    void OnNewCaptureVersion(const media::CaptureVersion& capture_version) final;
    void OnFrameWithEmptyRegionCapture() final;
@@ -72,11 +153,28 @@ index 2fde9abef07e90ce41f7dbac4d7fbcd2bcedda3d..1832be6b5e9d99decdd1cc164dd0952e
    void OnStopped() final;
    void OnLog(const std::string& message) final;
    // Establishes connection to FrameSinkVideoCapturer and sends the existing
+   // configuration.
+   void EstablishConnection();
+ 
+   // Called when the message pipe is gone. Will call EstablishConnection after
+   // some delay.
+   void OnConnectionError();
+ 
+   void StartInternal();
+ 
 diff --git components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider.h components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider.h
 index 803b8663326d694f90c422a41d54dc22f1355539..fca4566eb30e0ebdbeef5e8f2e9615f4d26dcb5e 100644
 --- components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider.h
 +++ components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider.h
-@@ -9,6 +9,7 @@
+@@ -1,35 +1,50 @@
+ // Copyright 2022 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+ #ifndef COMPONENTS_VIZ_SERVICE_FRAME_SINKS_GMB_VIDEO_FRAME_POOL_CONTEXT_PROVIDER_H_
+ #define COMPONENTS_VIZ_SERVICE_FRAME_SINKS_GMB_VIDEO_FRAME_POOL_CONTEXT_PROVIDER_H_
+ 
+ #include <memory>
  
  #include "base/functional/callback.h"
  #include "base/memory/scoped_refptr.h"
@@ -84,7 +182,12 @@ index 803b8663326d694f90c422a41d54dc22f1355539..fca4566eb30e0ebdbeef5e8f2e9615f4
  #include "media/video/renderable_mappable_shared_image_video_frame_pool.h"
  
  namespace viz {
-@@ -21,13 +22,27 @@ class GmbVideoFramePoolContextProvider {
+ 
+ // Context provider for contexts needed to create instances of
+ // `media::RenderableMappableSharedImageVideoFramePool`. Used to create an
+ // instance of `FrameSinkManagerImpl` capable of creating
+ // `FrameSinkVideoCapturerImpl` with `GpuMemoryBuffer` support.
+ class GmbVideoFramePoolContextProvider {
   public:
    virtual ~GmbVideoFramePoolContextProvider() = default;
  
@@ -113,11 +216,22 @@ index 803b8663326d694f90c422a41d54dc22f1355539..fca4566eb30e0ebdbeef5e8f2e9615f4
  };
  
  }  // namespace viz
+ 
+ #endif  // COMPONENTS_VIZ_SERVICE_FRAME_SINKS_GMB_VIDEO_FRAME_POOL_CONTEXT_PROVIDER_H_
 diff --git components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
 index f528c04eded7f870a882ed42e8d2d8e23ad965c4..5db8dab91ab8d6ecd456175ee6cebb4d42c7f581 100644
 --- components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
 +++ components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
-@@ -11,6 +11,7 @@
+@@ -2,44 +2,49 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+ #include "components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.h"
+ 
+ #include <memory>
+ #include <utility>
+ 
+ #include "base/functional/callback.h"
  #include "base/synchronization/waitable_event.h"
  #include "base/task/bind_post_task.h"
  #include "base/task/sequenced_task_runner.h"
@@ -125,7 +239,7 @@ index f528c04eded7f870a882ed42e8d2d8e23ad965c4..5db8dab91ab8d6ecd456175ee6cebb4d
  #include "components/viz/service/gl/gpu_service_impl.h"
  #include "gpu/command_buffer/client/client_shared_image.h"
  #include "gpu/command_buffer/service/scheduler_sequence.h"
-@@ -18,6 +19,7 @@
+ #include "gpu/command_buffer/service/shared_context_state.h"
  #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
  #include "gpu/command_buffer/service/shared_image_interface_in_process.h"
  #include "gpu/ipc/common/gpu_client_ids.h"
@@ -133,7 +247,7 @@ index f528c04eded7f870a882ed42e8d2d8e23ad965c4..5db8dab91ab8d6ecd456175ee6cebb4d
  
  namespace viz {
  
-@@ -25,12 +27,15 @@ class GmbVideoFramePoolContext
+ class GmbVideoFramePoolContext
      : public media::RenderableMappableSharedImageVideoFramePool::Context,
        public gpu::SharedContextState::ContextLostObserver {
   public:
@@ -152,7 +266,25 @@ index f528c04eded7f870a882ed42e8d2d8e23ad965c4..5db8dab91ab8d6ecd456175ee6cebb4d
      DETACH_FROM_SEQUENCE(gpu_sequence_checker_);
  
      // TODO(vikassoni): Verify this is the right GPU thread/sequence for DrDC.
-@@ -87,6 +92,20 @@ class GmbVideoFramePoolContext
+     sequence_ = std::make_unique<gpu::SchedulerSequence>(
+         gpu_service_->GetGpuScheduler(), gpu_service_->main_runner(),
+         /*target_thread_is_always_available=*/true);
+ 
+     base::WaitableEvent event;
+ 
+     sequence_->ScheduleTask(
+         base::BindOnce(&GmbVideoFramePoolContext::InitializeOnGpu,
+                        base::Unretained(this), &event),
+@@ -78,24 +83,38 @@ class GmbVideoFramePoolContext
+     if (!client_shared_image) {
+       return nullptr;
+     }
+     sync_token = sii_in_process_->GenVerifiedSyncToken();
+     return client_shared_image;
+   }
+ 
+   // Destroy a SharedImage created by this interface.
+   void DestroySharedImage(
        const gpu::SyncToken& sync_token,
        scoped_refptr<gpu::ClientSharedImage> shared_image) override {
      CHECK(shared_image);
@@ -173,7 +305,25 @@ index f528c04eded7f870a882ed42e8d2d8e23ad965c4..5db8dab91ab8d6ecd456175ee6cebb4d
      shared_image->UpdateDestructionSyncToken(sync_token);
    }
  
-@@ -151,6 +170,10 @@ class GmbVideoFramePoolContext
+   const gpu::SharedImageCapabilities& GetCapabilities() override {
+     return sii_in_process_->GetCapabilities();
+   }
+ 
+  private:
+   void InitializeOnGpu(base::WaitableEvent* event) {
+     DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
+     CHECK(!initialized_);
+     CHECK(gpu_service_);
+@@ -142,38 +161,44 @@ class GmbVideoFramePoolContext
+   void OnContextLost() override {
+     DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
+ 
+     CHECK(on_context_lost_);
+     std::move(on_context_lost_).Run();
+   }
+ 
+   const raw_ptr<GpuServiceImpl> gpu_service_;
+ 
    // Closure that we need to call when context loss happens.
    base::OnceClosure on_context_lost_;
  
@@ -184,7 +334,20 @@ index f528c04eded7f870a882ed42e8d2d8e23ad965c4..5db8dab91ab8d6ecd456175ee6cebb4d
    // True iff the context was initialized on GPU.
    bool initialized_ = false;
  
-@@ -171,9 +194,11 @@ GmbVideoFramePoolContextProviderImpl::~GmbVideoFramePoolContextProviderImpl() =
+   std::unique_ptr<gpu::SchedulerSequence> sequence_;
+   scoped_refptr<gpu::SharedContextState> shared_context_state_;
+ 
+   scoped_refptr<gpu::SharedImageInterfaceInProcess> sii_in_process_;
+ 
+   SEQUENCE_CHECKER(gpu_sequence_checker_);
+ };
+ 
+ GmbVideoFramePoolContextProviderImpl::GmbVideoFramePoolContextProviderImpl(
+     GpuServiceImpl* gpu_service)
+     : gpu_service_(gpu_service) {}
+ 
+ GmbVideoFramePoolContextProviderImpl::~GmbVideoFramePoolContextProviderImpl() =
+     default;
  
  std::unique_ptr<media::RenderableMappableSharedImageVideoFramePool::Context>
  GmbVideoFramePoolContextProviderImpl::CreateContext(
@@ -203,7 +366,16 @@ diff --git components/viz/service/frame_sinks/gmb_video_frame_pool_context_provi
 index f6802e372d8eb98c06d8257908ba8214d1a5ceab..4abfda1c9088fe52cd81824d615318744860b977 100644
 --- components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.h
 +++ components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.h
-@@ -28,7 +28,8 @@ class VIZ_SERVICE_EXPORT GmbVideoFramePoolContextProviderImpl
+@@ -19,21 +19,22 @@ class VIZ_SERVICE_EXPORT GmbVideoFramePoolContextProviderImpl
+     : public GmbVideoFramePoolContextProvider {
+  public:
+   explicit GmbVideoFramePoolContextProviderImpl(GpuServiceImpl* gpu_service);
+ 
+   GmbVideoFramePoolContextProviderImpl(
+       const GmbVideoFramePoolContextProviderImpl& other) = delete;
+   GmbVideoFramePoolContextProviderImpl& operator=(
+       const GmbVideoFramePoolContextProviderImpl& other) = delete;
+ 
    ~GmbVideoFramePoolContextProviderImpl() override;
  
    std::unique_ptr<media::RenderableMappableSharedImageVideoFramePool::Context>
@@ -213,11 +385,25 @@ index f6802e372d8eb98c06d8257908ba8214d1a5ceab..4abfda1c9088fe52cd81824d61531874
  
   private:
    const raw_ptr<GpuServiceImpl> gpu_service_;
+ };
+ 
+ }  // namespace viz
+ 
+ #endif  // COMPONENTS_VIZ_SERVICE_FRAME_SINKS_GMB_VIDEO_FRAME_POOL_CONTEXT_PROVIDER_IMPL_H_
 diff --git components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
 index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d4a8e0760 100644
 --- components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
 +++ components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.cc
-@@ -102,7 +102,8 @@ std::unique_ptr<VideoFramePool> GetVideoFramePoolForFormat(
+@@ -93,54 +93,55 @@ constexpr gfx::Rect kMaxRect = gfx::Rect(0,
+ // CopyOutputRequest will use kN32_SkColorType (RGBA on Android, BGRA elsewhere)
+ // mostly, and use kRGBA_8888_SkColorType on iOS. This is also documented in the
+ // mojom comments (https://crrev.com/c/5418235) about SetFormat, indicating the
+ // ARGB format may produce RGBA/BGRA frames depends on platform.
+ 
+ // Get the frame pool for the specific format. We need context_provider if the
+ // format is NV12 or ARGB (when buffer_format_preference is kNativeTexture).
+ // Thus, buffer_format_preference is also needed to tell which mode ARGB use.
+ std::unique_ptr<VideoFramePool> GetVideoFramePoolForFormat(
      media::VideoPixelFormat format,
      int capacity,
      mojom::BufferFormatPreference buffer_format_preference,
@@ -227,7 +413,18 @@ index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d
    CHECK(format == media::PIXEL_FORMAT_I420 ||
          format == media::PIXEL_FORMAT_NV12 ||
          format == media::PIXEL_FORMAT_ARGB ||
-@@ -121,7 +122,7 @@ std::unique_ptr<VideoFramePool> GetVideoFramePoolForFormat(
+         format == media::PIXEL_FORMAT_RGBAF16);
+ 
+   switch (format) {
+     case media::PIXEL_FORMAT_I420:
+       return std::make_unique<SharedMemoryVideoFramePool>(capacity);
+     case media::PIXEL_FORMAT_ARGB:
+     case media::PIXEL_FORMAT_RGBAF16: {
+       auto color_space = format == media::PIXEL_FORMAT_ARGB
+                              ? gfx::ColorSpace::CreateSRGB()
+                              : gfx::ColorSpace::CreateSRGBLinear();
+       switch (buffer_format_preference) {
+         case mojom::BufferFormatPreference::kPreferMappableSharedImage:
          case mojom::BufferFormatPreference::kPreferSharedImageWithNativeHandle:
            return std::make_unique<MappableSharedImageVideoFramePool>(
                capacity, format, color_space, context_provider,
@@ -236,7 +433,9 @@ index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d
          case mojom::BufferFormatPreference::kDefault:
            return std::make_unique<SharedMemoryVideoFramePool>(capacity);
          default:
-@@ -131,7 +132,7 @@ std::unique_ptr<VideoFramePool> GetVideoFramePoolForFormat(
+           NOTREACHED();
+       }
+     }
      case media::PIXEL_FORMAT_NV12:
        return std::make_unique<MappableSharedImageVideoFramePool>(
            capacity, format, gfx::ColorSpace::CreateREC709(), context_provider,
@@ -245,7 +444,25 @@ index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d
      default:
        NOTREACHED();
    }
-@@ -331,7 +332,10 @@ void FrameSinkVideoCapturerImpl::SetFormat(media::VideoPixelFormat format) {
+ }
+ 
+ CopyOutputRequest::ResultFormat VideoPixelFormatToCopyOutputRequestFormat(
+     media::VideoPixelFormat format) {
+   switch (format) {
+     case media::PIXEL_FORMAT_I420:
+       return CopyOutputRequest::ResultFormat::I420_PLANES;
+     case media::PIXEL_FORMAT_NV12:
+       return CopyOutputRequest::ResultFormat::NV12;
+@@ -322,25 +323,28 @@ void FrameSinkVideoCapturerImpl::SetFormat(media::VideoPixelFormat format) {
+       // If we have started with kPreferMappableSharedImage, we set it to
+       // kDefault as currently we probably only doing mid-capture change due to
+       // crash downgrade, and we should not try using mappable SI anymore.
+       // TODO: We may move buffer_format_preference from Start to SetFormat.
+       buffer_format_preference_ = mojom::BufferFormatPreference::kDefault;
+ 
+       TRACE_EVENT_INSTANT("gpu.capture", "SetFormat", "format", format);
+ 
+       MarkFrame(nullptr);
  
        frame_pool_ = GetVideoFramePoolForFormat(
            pixel_format_, kFramePoolCapacity, buffer_format_preference_,
@@ -257,7 +474,25 @@ index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d
        RefreshEntireSourceNow();
      }
    }
-@@ -460,7 +464,9 @@ void FrameSinkVideoCapturerImpl::Start(
+ }
+ 
+ void FrameSinkVideoCapturerImpl::SetMinCapturePeriod(
+     base::TimeDelta min_capture_period) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+   constexpr base::TimeDelta kMinMinCapturePeriod = base::Microseconds(
+       base::Time::kMicrosecondsPerSecond / media::limits::kMaxFramesPerSecond);
+   if (min_capture_period < kMinMinCapturePeriod) {
+@@ -451,25 +455,27 @@ void FrameSinkVideoCapturerImpl::Start(
+   }
+ 
+   buffer_format_preference_ = buffer_format_preference;
+ 
+   TRACE_EVENT_INSTANT("gpu.capture", "Start", "buffer_format_preference",
+                       buffer_format_preference);
+ 
+   // Clear any marked frame if the capturer was restarted.
+   MarkFrame(nullptr);
  
    frame_pool_ = GetVideoFramePoolForFormat(
        pixel_format_, kFramePoolCapacity, buffer_format_preference_,
@@ -268,7 +503,25 @@ index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d
  
    TRACE_EVENT_BEGIN("gpu.capture", "FrameSinkVideoCapturerImpl::Start",
                      perfetto::Track::FromPointer(this), "pixel_format_",
-@@ -501,9 +507,33 @@ void FrameSinkVideoCapturerImpl::Start(
+                     pixel_format_, "buffer_format_preference_",
+                     buffer_format_preference_);
+ 
+   // If we should start capture for NV12 format, we can only hand out mappable
+   // SharedImages so the caller must tolerate them:
+   CHECK(pixel_format_ != media::PIXEL_FORMAT_NV12 ||
+         buffer_format_preference_ ==
+             mojom::BufferFormatPreference::kPreferMappableSharedImage);
+ 
+@@ -492,27 +498,51 @@ void FrameSinkVideoCapturerImpl::Start(
+   }
+ 
+   consumer_.Bind(std::move(consumer));
+   // In the future, if the connection to the consumer is lost before a call to
+   // Stop(), make that call on its behalf.
+   consumer_.set_disconnect_handler(base::BindOnce(
+       &FrameSinkVideoCapturerImpl::Stop, base::Unretained(this)));
+ 
+   // Inform the consumer of the change ahead of the first frame (which will
    // essentially have the same message implicit in its metadata).
    consumer_->OnNewCaptureVersion(capture_version());
  
@@ -302,7 +555,25 @@ index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d
  void FrameSinkVideoCapturerImpl::Stop() {
    if (!video_capture_started_) {
      return;
-@@ -913,6 +943,25 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
+   }
+ 
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+   refresh_frame_retry_timer_->Stop();
+ 
+   // Clear any marked frame.
+   MarkFrame(nullptr);
+ 
+@@ -904,24 +934,43 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
+   if (can_resurrect_content) {
+     TRACE_EVENT_INSTANT("gpu.capture", "UsingResurrectedFrame");
+     frame = ResurrectFrame();
+   } else {
+     TRACE_EVENT_INSTANT("gpu.capture", "ReservingVideoFrame",
+                         "root_render_pass_size",
+                         region_properties->root_render_pass_size.ToString(),
+                         "render_pass_subrect",
+                         region_properties->render_pass_subrect.ToString());
      frame = frame_pool_->ReserveVideoFrame(pixel_format_, capture_size);
    }
  
@@ -328,11 +599,29 @@ index c63c52835af8fc26fa5306a5c337c185cb11089b..271e045b1210c92d3331f947bc12499d
    UMA_HISTOGRAM_BOOLEAN("Viz.FrameSinkVideoCapturer.FrameResurrected",
                          can_resurrect_content);
  
+   const float utilization = GetPipelineUtilization();
+   const int utilization_pct = AsPercent(utilization);
+ 
+   // Do not proceed if the pool did not provide a frame: This indicates the
+   // pipeline is full.
+   if (!frame) {
+     TRACE_EVENT_INSTANT("gpu.capture", "PipelineLimited", "trigger",
+                         VideoCaptureOracle::EventAsString(event),
+                         "utilization_pct", utilization_pct);
 diff --git components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h
 index 6aa3f8e4fb250d0692ecffc9c895c48be534d3cd..70e68fc831088adf0b3fb1309e685d9c3780086c 100644
 --- components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h
 +++ components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h
-@@ -379,6 +379,11 @@ class VIZ_SERVICE_EXPORT FrameSinkVideoCapturerImpl final
+@@ -370,24 +370,29 @@ class VIZ_SERVICE_EXPORT FrameSinkVideoCapturerImpl final
+   void MaybeDeliverFrame(FrameCapture frame_capture);
+ 
+   // For ARGB format, ensures that every dimension of `size` is positive. For
+   // I420 format, ensures that every dimension is even and at least 2.
+   gfx::Size AdjustSizeForPixelFormat(const gfx::Size& size) const;
+ 
+   // Expands `rect` such that its x, y, right, and bottom values are even
+   // numbers.
+   static gfx::Rect ExpandRectToI420SubsampleBoundaries(const gfx::Rect& rect);
  
    void OnLog(const std::string& message);
  
@@ -344,7 +633,25 @@ index 6aa3f8e4fb250d0692ecffc9c895c48be534d3cd..70e68fc831088adf0b3fb1309e685d9c
    bool ShouldMark(const media::VideoFrame& frame,
                    int64_t content_version) const;
  
-@@ -540,6 +545,15 @@ class VIZ_SERVICE_EXPORT FrameSinkVideoCapturerImpl final
+   // Marks `frame` for resurrection, using `content_version` as its content
+   // version. If `frame` is null, the frame marking will be cleared, in which
+   // case the `content_version` parameter is ignored.
+   void MarkFrame(scoped_refptr<media::VideoFrame> frame,
+                  int64_t content_version = -1);
+ 
+   // Returns true if currently marked frame can be resurrected. `size` specifies
+   // the desired size of the frame
+   bool CanResurrectFrame(const gfx::Size& size) const;
+@@ -531,25 +536,42 @@ class VIZ_SERVICE_EXPORT FrameSinkVideoCapturerImpl final
+ 
+   // A weak pointer factory used for cancelling consumer feedback from any
+   // in-flight frame deliveries.
+   base::WeakPtrFactory<media::VideoCaptureOracle> feedback_weak_factory_;
+ 
+   // Enables debug log messages to be sent to webrtc native log.
+   const bool log_to_webrtc_;
+ 
+   // Avoids being overly chatty and wasting CPU when informing the consumer
    // of frames dropped due to being cropped to zero pixels.
    bool consumer_informed_of_empty_region_ = false;
  
@@ -360,7 +667,8 @@ index 6aa3f8e4fb250d0692ecffc9c895c48be534d3cd..70e68fc831088adf0b3fb1309e685d9c
    // The current version of the capture, indicating source-changes and the
    // application of sub-capture.
    const uint32_t capture_version_source_;
-@@ -548,6 +562,14 @@ class VIZ_SERVICE_EXPORT FrameSinkVideoCapturerImpl final
+   uint32_t capture_version_sub_capture_ = 0;
+ 
    // A weak pointer factory used for cancelling the results from any in-flight
    // copy output requests.
    base::WeakPtrFactory<FrameSinkVideoCapturerImpl> capture_weak_factory_{this};
@@ -375,11 +683,22 @@ index 6aa3f8e4fb250d0692ecffc9c895c48be534d3cd..70e68fc831088adf0b3fb1309e685d9c
  };
  
  }  // namespace viz
+ 
+ #endif  // COMPONENTS_VIZ_SERVICE_FRAME_SINKS_VIDEO_CAPTURE_FRAME_SINK_VIDEO_CAPTURER_IMPL_H_
 diff --git components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc
 index 588fd7ca94a4ad1a2bea32f41c46bb2716c2ddeb..69da26b2ce19e4088c9342dcd30db30fdca0c863 100644
 --- components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc
 +++ components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl_unittest.cc
-@@ -222,6 +222,8 @@ class MockConsumer : public mojom::FrameSinkVideoConsumer {
+@@ -213,24 +213,26 @@ class MockFrameSinkManager : public FrameSinkVideoCapturerManager {
+                CapturableFrameSink*(const VideoCaptureTarget& target));
+   MOCK_METHOD1(OnCapturerConnectionLost,
+                void(FrameSinkVideoCapturerImpl* capturer));
+ };
+ 
+ class MockConsumer : public mojom::FrameSinkVideoConsumer {
+  public:
+   MockConsumer()
+       : test_sii_(base::MakeRefCounted<gpu::TestSharedImageInterface>()) {}
  
    MOCK_METHOD0(OnFrameCapturedMock, void());
    MOCK_METHOD1(OnNewCaptureVersion, void(const media::CaptureVersion&));
@@ -388,7 +707,25 @@ index 588fd7ca94a4ad1a2bea32f41c46bb2716c2ddeb..69da26b2ce19e4088c9342dcd30db30f
    MOCK_METHOD0(OnStopped, void());
    MOCK_METHOD1(OnLog, void(const std::string&));
  
-@@ -794,7 +796,8 @@ class TestGmbVideoFramePoolContextProvider
+   int num_frames_received() const { return frames_.size(); }
+ 
+   scoped_refptr<VideoFrame> TakeFrame(int i) { return std::move(frames_[i]); }
+ 
+   void SendDoneNotification(int i) {
+     std::move(done_callbacks_[i]).Run();
+     PropagateMojoTasks();
+   }
+ 
+@@ -785,25 +787,26 @@ class TestGmbVideoFramePoolContext
+   }
+ 
+  private:
+   scoped_refptr<TestContextProvider> context_provider_;
+ };
+ 
+ class TestGmbVideoFramePoolContextProvider
+     : public GmbVideoFramePoolContextProvider {
+  public:
    ~TestGmbVideoFramePoolContextProvider() override = default;
  
    std::unique_ptr<media::RenderableMappableSharedImageVideoFramePool::Context>
@@ -398,11 +735,29 @@ index 588fd7ca94a4ad1a2bea32f41c46bb2716c2ddeb..69da26b2ce19e4088c9342dcd30db30f
      return std::make_unique<TestGmbVideoFramePoolContext>();
    }
  };
+ 
+ }  // namespace
+ 
+ class FrameSinkVideoCapturerTest
+     : public testing::Test,
+       public testing::WithParamInterface<
+           std::tuple<mojom::BufferFormatPreference, media::VideoPixelFormat>> {
+  public:
+   FrameSinkVideoCapturerTest()
 diff --git components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc
 index 35d0201b15130af44e6e08806f514d5f06670ed1..1e8aaa392ac84e5c7c1f00998d7a0742e9cec987 100644
 --- components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc
 +++ components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.cc
-@@ -15,11 +15,13 @@ MappableSharedImageVideoFramePool::MappableSharedImageVideoFramePool(
+@@ -6,29 +6,31 @@
+ 
+ #include <utility>
+ 
+ #include "components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider.h"
+ 
+ namespace viz {
+ 
+ MappableSharedImageVideoFramePool::MappableSharedImageVideoFramePool(
+     int capacity,
      media::VideoPixelFormat format,
      const gfx::ColorSpace& color_space,
      GmbVideoFramePoolContextProvider* context_provider,
@@ -417,7 +772,25 @@ index 35d0201b15130af44e6e08806f514d5f06670ed1..1e8aaa392ac84e5c7c1f00998d7a0742
        buffer_format_preference_(buffer_format_preference) {
    CHECK(color_space.IsValid());
    RecreateVideoFramePool();
-@@ -66,6 +68,12 @@ MappableSharedImageVideoFramePool::CloneHandleForDelivery(
+ }
+ 
+ MappableSharedImageVideoFramePool::~MappableSharedImageVideoFramePool() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ }
+ 
+ scoped_refptr<media::VideoFrame>
+ MappableSharedImageVideoFramePool::ReserveVideoFrame(
+     media::VideoPixelFormat format,
+@@ -57,36 +59,43 @@ MappableSharedImageVideoFramePool::ReserveVideoFrame(
+ 
+ media::mojom::VideoBufferHandlePtr
+ MappableSharedImageVideoFramePool::CloneHandleForDelivery(
+     const media::VideoFrame& frame) {
+   CHECK(frame.HasMappableSharedImage());
+ 
+   gfx::GpuMemoryBufferHandle handle = frame.GetGpuMemoryBufferHandle();
+ 
+   return media::mojom::VideoBufferHandle::NewGpuMemoryBufferHandle(
        std::move(handle));
  }
  
@@ -430,7 +803,11 @@ index 35d0201b15130af44e6e08806f514d5f06670ed1..1e8aaa392ac84e5c7c1f00998d7a0742
  size_t MappableSharedImageVideoFramePool::GetNumberOfReservedFrames() const {
    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
  
-@@ -77,7 +85,8 @@ void MappableSharedImageVideoFramePool::RecreateVideoFramePool() {
+   return num_reserved_frames_;
+ }
+ 
+ void MappableSharedImageVideoFramePool::RecreateVideoFramePool() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
  
    auto pool_context = context_provider_->CreateContext(
        base::BindOnce(&MappableSharedImageVideoFramePool::RecreateVideoFramePool,
@@ -440,11 +817,28 @@ index 35d0201b15130af44e6e08806f514d5f06670ed1..1e8aaa392ac84e5c7c1f00998d7a0742
    // Determine whether the video frame pool should use CPU mappable buffers.
    // If the caller prefers SharedImage with native handle (i.e., no CPU
    // mapping), pass false. Otherwise, default to requiring CPU access.
+   video_frame_pool_ =
+       media::RenderableMappableSharedImageVideoFramePool::Create(
+           std::move(pool_context), format_,
+           buffer_format_preference_ != mojom::BufferFormatPreference::
+                                            kPreferSharedImageWithNativeHandle);
+ 
+   video_frame_pool_generation_++;
+   num_reserved_frames_ = 0;
+ }
 diff --git components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h
 index 3ae88d4b4ceb94e839b6273c5823ea85b62b2dc2..279a3bf426a203839d59015415325e32d3b3bf8b 100644
 --- components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h
 +++ components/viz/service/frame_sinks/video_capture/mappable_shared_image_video_frame_pool.h
-@@ -9,6 +9,7 @@
+@@ -1,81 +1,95 @@
+ // Copyright 2022 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+ #ifndef COMPONENTS_VIZ_SERVICE_FRAME_SINKS_VIDEO_CAPTURE_MAPPABLE_SHARED_IMAGE_VIDEO_FRAME_POOL_H_
+ #define COMPONENTS_VIZ_SERVICE_FRAME_SINKS_VIDEO_CAPTURE_MAPPABLE_SHARED_IMAGE_VIDEO_FRAME_POOL_H_
+ 
+ #include <memory>
  
  #include "base/sequence_checker.h"
  #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
@@ -452,7 +846,7 @@ index 3ae88d4b4ceb94e839b6273c5823ea85b62b2dc2..279a3bf426a203839d59015415325e32
  #include "components/viz/service/frame_sinks/video_capture/video_frame_pool.h"
  #include "components/viz/service/viz_service_export.h"
  #include "media/video/renderable_mappable_shared_image_video_frame_pool.h"
-@@ -16,19 +17,23 @@
+ #include "services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom.h"
  
  namespace viz {
  
@@ -479,7 +873,17 @@ index 3ae88d4b4ceb94e839b6273c5823ea85b62b2dc2..279a3bf426a203839d59015415325e32
    ~MappableSharedImageVideoFramePool() override;
  
    MappableSharedImageVideoFramePool(
-@@ -46,6 +51,10 @@ class VIZ_SERVICE_EXPORT MappableSharedImageVideoFramePool
+       const MappableSharedImageVideoFramePool&& other) = delete;
+   MappableSharedImageVideoFramePool& operator=(
+       const MappableSharedImageVideoFramePool& other) = delete;
+ 
+   // VideoFramePool implementation:
+   scoped_refptr<media::VideoFrame> ReserveVideoFrame(
+       media::VideoPixelFormat format,
+       const gfx::Size& size) override;
+ 
+   media::mojom::VideoBufferHandlePtr CloneHandleForDelivery(
+       const media::VideoFrame& frame) override;
  
    size_t GetNumberOfReservedFrames() const override;
  
@@ -490,7 +894,21 @@ index 3ae88d4b4ceb94e839b6273c5823ea85b62b2dc2..279a3bf426a203839d59015415325e32
    // Returns the buffer format preference used to configure this pool.
    // This can be used in tests to verify how the pool was initialized.
    mojom::BufferFormatPreference buffer_format_preference() const {
-@@ -67,6 +76,11 @@ class VIZ_SERVICE_EXPORT MappableSharedImageVideoFramePool
+     return buffer_format_preference_;
+   }
+ 
+  private:
+   void RecreateVideoFramePool();
+ 
+   // Notify the pool that a video frame from |frame_pool_generation| was
+   // destroyed. If the generation matches the current pool generation, the
+   // number of reserved frames will be decremented.
+   void OnVideoFrameDestroyed(uint32_t frame_pool_generation);
+ 
+   // Support multiple format & color space
+   const media::VideoPixelFormat format_;
+   const gfx::ColorSpace color_space_;
+ 
    raw_ptr<GmbVideoFramePoolContextProvider> context_provider_
        GUARDED_BY_CONTEXT(sequence_checker_);
  
@@ -502,11 +920,28 @@ index 3ae88d4b4ceb94e839b6273c5823ea85b62b2dc2..279a3bf426a203839d59015415325e32
    std::unique_ptr<media::RenderableMappableSharedImageVideoFramePool>
        video_frame_pool_ GUARDED_BY_CONTEXT(sequence_checker_);
  
+   // Number of reserved video frames.
+   size_t num_reserved_frames_ GUARDED_BY_CONTEXT(sequence_checker_) = 0;
+ 
+   // Current generation of |video_frame_pool_|. It will be bumped every time
+   // we detect a context lost event and recerate |video_frame_pool_| - this is
+   // needed so that we can correctly book-keep the number of reserved frames
+   // (when a video frame from previous generation is released, we don't want
+   // to decrement |num_reserved_frames_|).
+   uint32_t video_frame_pool_generation_ GUARDED_BY_CONTEXT(sequence_checker_) =
 diff --git components/viz/service/frame_sinks/video_capture/video_frame_pool.cc components/viz/service/frame_sinks/video_capture/video_frame_pool.cc
 index 54a6b5121ea89c6c23674901f37f65372220cf82..51f9f4318757e07356b7f415a717f49df26da83a 100644
 --- components/viz/service/frame_sinks/video_capture/video_frame_pool.cc
 +++ components/viz/service/frame_sinks/video_capture/video_frame_pool.cc
-@@ -9,6 +9,10 @@
+@@ -1,23 +1,27 @@
+ // Copyright 2021 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+ #include "components/viz/service/frame_sinks/video_capture/video_frame_pool.h"
+ 
+ #include <algorithm>
+ #include <memory>
  
  namespace viz {
  
@@ -517,11 +952,29 @@ index 54a6b5121ea89c6c23674901f37f65372220cf82..51f9f4318757e07356b7f415a717f49d
  VideoFramePool::VideoFramePool(int capacity)
      : capacity_(std::max(0, capacity)) {
    CHECK_GT(capacity_, 0u);
+ }
+ 
+ VideoFramePool::~VideoFramePool() = default;
+ 
+ float VideoFramePool::GetUtilization() const {
+   return static_cast<float>(GetNumberOfReservedFrames()) / capacity_;
+ }
+ 
+ }  // namespace viz
 diff --git components/viz/service/frame_sinks/video_capture/video_frame_pool.h components/viz/service/frame_sinks/video_capture/video_frame_pool.h
 index 3a1a512f0d43eed0a52152e0529f2d1e4ccfc6a4..c19d155f2124ecc861f3a7fbd58676e1fe45fa2e 100644
 --- components/viz/service/frame_sinks/video_capture/video_frame_pool.h
 +++ components/viz/service/frame_sinks/video_capture/video_frame_pool.h
-@@ -55,6 +55,18 @@ class VIZ_SERVICE_EXPORT VideoFramePool {
+@@ -46,24 +46,36 @@ class VIZ_SERVICE_EXPORT VideoFramePool {
+       const media::VideoFrame& frame) = 0;
+ 
+   // Returns the current pool utilization, based on the number of VideoFrames
+   // being held by the client.
+   float GetUtilization() const;
+ 
+   // Returns the number of frames that are currently reserved (and thus still
+   // owned by the caller of |ReserveVideoFrame()|).
+   virtual size_t GetNumberOfReservedFrames() const = 0;
  
    size_t capacity() const { return capacity_; }
  
@@ -540,11 +993,29 @@ index 3a1a512f0d43eed0a52152e0529f2d1e4ccfc6a4..c19d155f2124ecc861f3a7fbd58676e1
   protected:
    // |capacity| is the maximum number of pooled VideoFrames; but they can be of
    // any byte size.
+   explicit VideoFramePool(int capacity);
+ 
+  private:
+   // The maximum number of buffers. However, the buffers themselves can be of
+   // any byte size.
+   const size_t capacity_;
+ };
+ 
+ }  // namespace viz
 diff --git content/browser/devtools/devtools_video_consumer.h content/browser/devtools/devtools_video_consumer.h
 index 549877b42f7f6dcc3a6e2f62ea575faec94578b2..eb9e01fa8f0ede75e7522c217c89e92f9719e6af 100644
 --- content/browser/devtools/devtools_video_consumer.h
 +++ content/browser/devtools/devtools_video_consumer.h
-@@ -75,6 +75,9 @@ class CONTENT_EXPORT DevToolsVideoConsumer
+@@ -66,24 +66,27 @@ class CONTENT_EXPORT DevToolsVideoConsumer
+                                  gfx::Size max_frame_size);
+ 
+   // viz::mojom::FrameSinkVideoConsumer:
+   void OnFrameCaptured(
+       ::media::mojom::VideoBufferHandlePtr data,
+       ::media::mojom::VideoFrameInfoPtr info,
+       const gfx::Rect& content_rect,
+       mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
+           callbacks) override;
    void OnNewCaptureVersion(
        const media::CaptureVersion& capture_version) override {}
    void OnFrameWithEmptyRegionCapture() override {}
@@ -554,11 +1025,29 @@ index 549877b42f7f6dcc3a6e2f62ea575faec94578b2..eb9e01fa8f0ede75e7522c217c89e92f
    void OnStopped() override;
    void OnLog(const std::string& /*message*/) override {}
  
+   // Default min frame size is 1x1, as otherwise, nothing would be captured.
+   static constexpr gfx::Size kDefaultMinFrameSize = gfx::Size(1, 1);
+ 
+   // Using an arbitrary default max frame size of 500x500.
+   static constexpr gfx::Size kDefaultMaxFrameSize = gfx::Size(500, 500);
+ 
+   // Callback that is run when a frame is received.
+   const OnFrameCapturedCallback callback_;
+ 
 diff --git content/browser/media/capture/frame_sink_video_capture_device.h content/browser/media/capture/frame_sink_video_capture_device.h
 index 25af899ea9a4d7f202ad5fe552359eb8612473ab..b27f3a2898a953c8141d6ae250209a240c8d848f 100644
 --- content/browser/media/capture/frame_sink_video_capture_device.h
 +++ content/browser/media/capture/frame_sink_video_capture_device.h
-@@ -104,6 +104,9 @@ class CONTENT_EXPORT FrameSinkVideoCaptureDevice
+@@ -95,24 +95,27 @@ class CONTENT_EXPORT FrameSinkVideoCaptureDevice
+   void StopAndDeAllocate() final;
+   void OnUtilizationReport(media::VideoCaptureFeedback feedback) override;
+ 
+   // FrameSinkVideoConsumer implementation.
+   void OnFrameCaptured(
+       media::mojom::VideoBufferHandlePtr data,
+       media::mojom::VideoFrameInfoPtr info,
+       const gfx::Rect& content_rect,
+       mojo::PendingRemote<viz::mojom::FrameSinkVideoConsumerFrameCallbacks>
            callbacks) override;
    void OnNewCaptureVersion(const media::CaptureVersion& capture_version) final;
    void OnFrameWithEmptyRegionCapture() final;
@@ -568,11 +1057,28 @@ index 25af899ea9a4d7f202ad5fe552359eb8612473ab..b27f3a2898a953c8141d6ae250209a24
    void OnStopped() final;
    void OnLog(const std::string& message) final;
  
+   // These are called to notify when the capture target has changed or was
+   // permanently lost. NOTE: a target can be temporarily std::nullopt without
+   // being permanently lost.
+   virtual void OnTargetChanged(
+       const std::optional<viz::VideoCaptureTarget>& target,
+       uint32_t sub_capture_target_version);
+   virtual void OnTargetPermanentlyLost();
+ 
+  protected:
 diff --git services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom
 index 0cbf840adcb9739ac8bb8ba96c24a2895b145295..9f032df7aef00748ccb79d86247d4a8dcaa166a4 100644
 --- services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom
 +++ services/viz/privileged/mojom/compositing/frame_sink_video_capture.mojom
-@@ -9,6 +9,7 @@ import "media/capture/mojom/video_capture_types.mojom";
+@@ -1,23 +1,24 @@
+ // Copyright 2017 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+ module viz.mojom;
+ 
+ import "media/capture/mojom/video_capture_buffer.mojom";
+ import "media/capture/mojom/video_capture_types.mojom";
  import "media/mojo/mojom/media_types.mojom";
  import "mojo/public/mojom/base/time.mojom";
  import "mojo/public/mojom/base/token.mojom";
@@ -580,7 +1086,25 @@ index 0cbf840adcb9739ac8bb8ba96c24a2895b145295..9f032df7aef00748ccb79d86247d4a8d
  import "services/viz/public/mojom/compositing/frame_sink_id.mojom";
  import "services/viz/public/mojom/compositing/subtree_capture_id.mojom";
  import "skia/public/mojom/bitmap.mojom";
-@@ -79,6 +80,32 @@ interface FrameSinkVideoConsumer {
+ import "ui/gfx/geometry/mojom/geometry.mojom";
+ 
+ // Provided with each call to FrameSinkVideoConsumer::OnFrameCaptured() so that
+ // the consumer can notify the capturer the instant it is done consuming the
+ // frame, and then later (optionally) provide utilization feedback.
+ interface FrameSinkVideoConsumerFrameCallbacks {
+   // Informs the capturer that the consumer is done reading the content of the
+   // video frame.
+   Done();
+@@ -70,24 +71,50 @@ interface FrameSinkVideoConsumer {
+   // target, or is paused, or is muted.
+   OnNewCaptureVersion(
+       media.mojom.CaptureVersion capture_version);
+ 
+   // Called when a frame is *not* delivered because Region Capture was applied,
+   // but the cropped-to region consists of zero pixels. This is needed because
+   // the blue border that is normally drawn around the cropped-to region should
+   // be updated.
+   // Note that this is specific to Region Capture. With Element Capture,
    // we always draw the blue border around the entire tab's viewport.
    OnFrameWithEmptyRegionCapture();
  
@@ -613,3 +1137,12 @@ index 0cbf840adcb9739ac8bb8ba96c24a2895b145295..9f032df7aef00748ccb79d86247d4a8d
    // Indicates that OnFrameCaptured() will not be called again, an end-of-stream
    // signal.
    OnStopped();
+   // Called to deliver a log message to the consumer.
+   // Currently used to populate WebRTC native logs.
+   OnLog(string message);
+ };
+ 
+ // Used to express the preference on the type of VideoBufferHandles that the
+ // consumer would like to obtain from the capturer. By default, the video
+ // buffers are returned via read only shared memory.
+ enum BufferFormatPreference {

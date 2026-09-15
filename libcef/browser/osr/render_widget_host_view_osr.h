@@ -264,6 +264,7 @@ class CefRenderWidgetHostViewOSR
   void OnAcceleratedPaint(const gfx::Rect& damage_rect,
                           const gfx::Size& pixel_size,
                           const CefAcceleratedPaintInfo& info);
+  void OnAcceleratedPaintSurfaceRetired(uint64_t pool_surface_id);
 
   void OnBeginFame(base::TimeTicks frame_time);
 

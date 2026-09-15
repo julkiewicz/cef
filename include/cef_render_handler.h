@@ -175,6 +175,30 @@ class CefRenderHandler : public virtual CefBaseRefCounted {
                                   const RectList& dirtyRects,
                                   const CefAcceleratedPaintInfo& info) {}
 
+#if CEF_API_ADDED(CEF_EXPERIMENTAL)
+  ///
+  /// Called when the surface identified by |pool_surface_id| is permanently
+  /// retired: it has left the capture pool and will never be delivered to
+  /// OnAcceleratedPaint again. This method is only used when window rendering
+  /// is disabled.
+  ///
+  /// The same surface is delivered many times under the same |pool_surface_id|,
+  /// so a client that does per-surface work once, such as opening the shared
+  /// handle into its own graphics API, keeps that work keyed by the id. This is
+  /// what says to throw it away. Nothing else does: releasing a lease only
+  /// means the surface may be reused, and an import the client made is a
+  /// reference the pool cannot see, so the pool dropping its own does not free
+  /// the memory.
+  ///
+  /// Ids are never reused, so an id the client does not know can be ignored.
+  /// Called on the same thread as OnAcceleratedPaint, and for any one surface
+  /// always after the last paint that delivered it.
+  ///
+  /*--cef(added=experimental)--*/
+  virtual void OnAcceleratedPaintSurfaceRetired(CefRefPtr<CefBrowser> browser,
+                                                uint64_t pool_surface_id) {}
+#endif
+
   ///
   /// Called to retrieve the size of the touch handle for the specified
   /// |orientation|.

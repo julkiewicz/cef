@@ -1648,6 +1648,28 @@ void CefRenderWidgetHostViewOSR::OnPaint(const gfx::Rect& damage_rect,
   }
 }
 
+void CefRenderWidgetHostViewOSR::OnAcceleratedPaintSurfaceRetired(
+    uint64_t pool_surface_id) {
+  TRACE_EVENT0("cef",
+               "CefRenderWidgetHostViewOSR::OnAcceleratedPaintSurfaceRetired");
+
+  // Deliberately NOT gated on |is_showing_|, unlike OnAcceleratedPaint: a
+  // hidden view still has to let go of a surface that no longer exists, and
+  // dropping the message would strand whatever the client imported from it.
+  if (!browser_impl_ || !browser_impl_->client()) {
+    return;
+  }
+
+  CefRefPtr<CefRenderHandler> handler =
+      browser_impl_->client()->GetRenderHandler();
+  if (!handler) {
+    return;
+  }
+
+  handler->OnAcceleratedPaintSurfaceRetired(browser_impl_.get(),
+                                            pool_surface_id);
+}
+
 void CefRenderWidgetHostViewOSR::OnAcceleratedPaint(
     const gfx::Rect& damage_rect,
     const gfx::Size& pixel_size,

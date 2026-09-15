@@ -62,6 +62,14 @@ class CefVideoConsumerOSR : public viz::mojom::FrameSinkVideoConsumer {
   // release whatever it imported from the old ones.
   void OnCaptureBuffersRetired() override;
 
+  // ONE surface is permanently retired: it left the capture pool and can never
+  // be delivered again. Unlike the whole-pool case above this is the ordinary
+  // one, a pool trimming the surplus it allocated to get through a burst of
+  // captures, and it is what the client needs in order to release an import
+  // that nothing else would ever tell it about.
+  void OnCaptureBufferRetired(
+      const base::UnguessableToken& buffer_token) override;
+
   void OnStopped() override {}
   void OnLog(const std::string& message) override {}
   void OnNewCaptureVersion(
